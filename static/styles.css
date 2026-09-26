@@ -143,6 +143,7 @@ h3 {
   flex-direction: column;
 }
 .nav-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -156,6 +157,17 @@ h3 {
     background 0.15s,
     color 0.15s;
 }
+.nav-link::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  width: 2px;
+  height: 18px;
+  border-radius: 2px;
+  background: #e58870;
+  transform: scaleY(0);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
 .nav-link:hover {
   background: #222d27;
   color: white;
@@ -163,6 +175,9 @@ h3 {
 .nav-link.active {
   color: #fff;
   background: #30332c;
+}
+.nav-link.active::before {
+  transform: scaleY(1);
 }
 .nav-link.active svg {
   color: #e58870;
@@ -266,6 +281,7 @@ h3 {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 27px;
+  animation: heading-enter 0.18s ease-out both;
 }
 .page-head h1 {
   font-size: clamp(26px, 2.8vw, 33px);
@@ -294,6 +310,9 @@ h3 {
 }
 .btn:hover {
   transform: translateY(-1px);
+}
+.btn:active {
+  transform: translateY(0) scale(0.98);
 }
 .btn:disabled {
   opacity: 0.55;
@@ -414,6 +433,7 @@ h3 {
   border-radius: 50%;
   right: 107px;
   top: 90px;
+  animation: stock-moving 0.52s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .metric-grid {
   display: grid;
@@ -774,6 +794,7 @@ td {
   border-top: 1px solid #eef1ed;
   color: #536157;
   font-size: 12px;
+  transition: background-color 0.12s ease-out;
 }
 td strong {
   color: #243329;
@@ -1244,6 +1265,12 @@ tr[hidden] {
 .modal::backdrop {
   background: rgba(12, 22, 17, 0.58);
 }
+.modal[open] {
+  animation: modal-enter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.modal[open]::backdrop {
+  animation: backdrop-enter 0.18s ease-out;
+}
 .modal-head {
   display: flex;
   align-items: center;
@@ -1624,6 +1651,59 @@ tr[hidden] {
   }
   .profile-actions {
     flex-wrap: wrap;
+  }
+}
+@keyframes heading-enter {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes stock-moving {
+  from {
+    opacity: 0;
+    transform: translateX(-75px) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .page-head,
+  .graphic-dot,
+  .modal[open],
+  .modal[open]::backdrop {
+    animation: none;
+  }
+  .nav-link::before,
+  .btn,
+  td,
+  #toast {
+    transition: none;
   }
 }
 @media print {
