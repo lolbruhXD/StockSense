@@ -8,6 +8,7 @@ const state = {
   renderId: 0,
   devResetCode: "",
 };
+const pageSize = 100;
 
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -93,6 +94,20 @@ function navLink(route, label, glyph, current) {
 
 function shell(content, section, title, action = "") {
   const first = state.user.name.trim().split(" ")[0];
+  const existing = app.querySelector(".shell");
+  if (existing) {
+    existing.querySelector("#main").innerHTML = content;
+    existing.querySelector(".breadcrumbs strong").textContent = title;
+    existing.querySelector(".top-actions").innerHTML =
+      `${action}<a class="top-profile" href="#/profile" aria-label="My profile">${icon("user", 19)}</a>`;
+    existing.querySelector(".avatar").textContent = first[0]?.toUpperCase() || "U";
+    existing.querySelector(".sidebar-user strong").textContent = state.user.name;
+    for (const link of existing.querySelectorAll(".nav-link")) {
+      link.classList.toggle("active", link.getAttribute("href") === `#${section}`);
+    }
+    existing.classList.remove("menu-open");
+    return;
+  }
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#/dashboard"><span class="brand-mark"><span></span><span></span><span></span></span><span>Stock<span>Sense</span><small>INVENTORY CONTROL</small></span></a>
@@ -151,6 +166,7 @@ function productOptions(selected = "") {
 }
 
 function renderAuth() {
+  state.renderId++;
   const mode = state.authMode;
   const signup = mode === "signup";
   const reset = mode === "reset" || mode === "reset-confirm";
@@ -160,12 +176,21 @@ function renderAuth() {
       <div class="auth-switch">${mode === "login" ? `<button data-auth="reset">Forgot password?</button><span>New here? <button data-auth="signup">Create an account</button></span>` : `<button data-auth="login">Back to sign in</button>${mode === "reset" ? '<button data-auth="reset-confirm">I have a code</button>' : ""}`}</div></div><div class="auth-panel-foot">Built for the people who keep things moving.</div></div></div>`;
 }
 
-async function loadCatalog() {
-  state.catalog = await api("/bootstrap");
+let catalogRequest;
+function loadCatalog() {
+  if (state.catalog) return Promise.resolve(state.catalog);
+  if (!catalogRequest) {
+    catalogRequest = api("/bootstrap")
+      .then((catalog) => {
+        state.catalog = catalog;
+        return catalog;
+      })
+      .finally(() => (catalogRequest = null));
+  }
+  return catalogRequest;
 }
 
-async function renderDashboard() {
-  const data = await api("/dashboard");
+function renderDashboard(data) {
   const metrics = [
     ["Products in stock", data.products_in_stock, "box", "/stock"],
     ["Low / out of stock", data.low_stock, "alert", "/stock"],
@@ -196,8 +221,7 @@ async function renderDashboard() {
   shell(content, "/dashboard", "Dashboard");
 }
 
-async function renderProducts() {
-  const rows = await api("/products");
+function renderProducts(rows) {
   const content = `${pageHead("Products", "Create your catalog and set reorder points for timely alerts.", `<div class="head-actions">${button("Add category", "category", "secondary")}${button(`${icon("plus", 17)} Add product`, "product")}</div>`)}
     <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="product-search" placeholder="Search name or SKU" aria-label="Search products"></label><select id="product-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count">${countLabel(rows.length, "product")}</span></div>
     <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Unit</th><th>On hand</th><th>Reorder at</th><th>Status</th><th></th></tr></thead><tbody id="product-rows">${productRows(rows)}</tbody></table></div>`;
@@ -214,19 +238,21 @@ function productRows(rows) {
     : `<tr><td colspan="8">${empty("Your catalog starts here", "Add your first product to begin tracking stock.", button("Add product", "product", "secondary"))}</td></tr>`;
 }
 
-async function renderStock() {
-  const rows = await api("/stock");
+function renderStock(rows) {
   const content = `${pageHead("Stock overview", "See on-hand quantities at each location and reconcile physical counts.", `<a class="btn primary" href="#/new/adjustment">${icon("plus", 17)} Stock adjustment</a>`)}
     <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="stock-search" placeholder="Search name or SKU" aria-label="Search stock"></label><select id="stock-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="stock-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count">${rows.length} locations</span></div>
     <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Warehouse</th><th>Location</th><th>Unit cost</th><th>On hand</th><th>Unit</th></tr></thead><tbody id="stock-rows">${stockRows(rows)}</tbody></table></div><p class="table-note">Stock totals change only when an operation is validated. Use an adjustment to record a physical count.</p>`;
   shell(content, "/stock", "Stock overview");
 }
 function stockRows(rows) {
+  const categories = new Map(
+    state.catalog.products.map((product) => [product.id, product.category_id]),
+  );
   return rows.length
     ? rows
         .map(
           (r) =>
-            `<tr data-search="${escapeHtml((r.product + " " + r.sku).toLowerCase())}" data-warehouse="${r.warehouse_id}" data-category="${r.category || ""}" data-category-id="${state.catalog.products.find((p) => p.id === r.product_id)?.category_id || ""}"><td><strong>${escapeHtml(r.product)}</strong></td><td class="code">${escapeHtml(r.sku)}</td><td>${escapeHtml(r.warehouse)}</td><td>${escapeHtml(r.location)}</td><td>${formatQuantity(r.unit_cost)}</td><td><strong>${formatQuantity(r.quantity)}</strong></td><td>${escapeHtml(r.uom)}</td></tr>`,
+            `<tr data-search="${escapeHtml((r.product + " " + r.sku).toLowerCase())}" data-warehouse="${r.warehouse_id}" data-category="${r.category || ""}" data-category-id="${categories.get(r.product_id) || ""}"><td><strong>${escapeHtml(r.product)}</strong></td><td class="code">${escapeHtml(r.sku)}</td><td>${escapeHtml(r.warehouse)}</td><td>${escapeHtml(r.location)}</td><td>${formatQuantity(r.unit_cost)}</td><td><strong>${formatQuantity(r.quantity)}</strong></td><td>${escapeHtml(r.uom)}</td></tr>`,
         )
         .join("")
     : `<tr><td colspan="7">${empty("No stock locations yet", "Create a warehouse and add products to see stock by location.", '<a class="btn secondary" href="#/warehouses">Set up warehouse</a>')}</td></tr>`;
@@ -261,14 +287,11 @@ function movementEndpoint(o, side) {
   if (o.type === "adjustment") return side === "to" ? "Physical count" : "—";
   return o.partner || (side === "from" ? "Supplier" : "Customer");
 }
-async function renderOperations(kind) {
-  const rows = await api(
-    "/operations" + queryString({ type: kind === "all" ? "" : kind }),
-  );
+function renderOperations(kind, rows) {
   const newKind = kind === "all" ? "receipt" : kind;
   const content = `${pageHead(operationTitle(kind), operationDescription(kind), `<a class="btn primary" href="#/new/${newKind}">${icon("plus", 17)} New ${newKind}</a>`)}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="operation-search" placeholder="Search reference or contact" aria-label="Search operations"></label>${kind === "all" ? `<select id="operation-type" aria-label="Filter by document type"><option value="">All types</option>${["receipt", "delivery", "transfer", "adjustment"].map((t) => `<option value="${t}">${titleCase(t)}</option>`).join("")}</select>` : ""}<select id="operation-status" aria-label="Filter by status"><option value="">All statuses</option>${["draft", "waiting", "ready", "done", "canceled"].map((s) => `<option value="${s}">${titleCase(s)}</option>`).join("")}</select><select id="operation-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="operation-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="operation-count">${rows.length} records</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Reference</th><th>Type</th><th>From</th><th>To</th><th>Contact</th><th>Scheduled</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody id="operation-rows">${operationRows(rows, kind)}</tbody></table></div>`;
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="operation-search" placeholder="Search reference or contact" aria-label="Search operations"></label>${kind === "all" ? `<select id="operation-type" aria-label="Filter by document type"><option value="">All types</option>${["receipt", "delivery", "transfer", "adjustment"].map((t) => `<option value="${t}">${titleCase(t)}</option>`).join("")}</select>` : ""}<select id="operation-status" aria-label="Filter by status"><option value="">All statuses</option>${["draft", "waiting", "ready", "done", "canceled"].map((s) => `<option value="${s}">${titleCase(s)}</option>`).join("")}</select><select id="operation-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="operation-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="operation-count">Showing ${rows.length} records</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Reference</th><th>Type</th><th>From</th><th>To</th><th>Contact</th><th>Scheduled</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody id="operation-rows">${operationRows(rows, kind)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="operations-more" ${rows.length < pageSize ? "hidden" : ""}>Load more operations</button>`;
   shell(content, `/operations/${kind}`, operationTitle(kind));
 }
 function operationRows(rows, kind) {
@@ -307,8 +330,7 @@ function operationForm(kind, operation = null) {
   );
 }
 
-async function renderOperationDetail(id) {
-  const o = await api(`/operations/${id}`);
+function renderOperationDetail(o) {
   const steps =
     o.type === "delivery"
       ? ["Draft", "Waiting", "Picked", "Packed", "Ready", "Done"]
@@ -360,11 +382,10 @@ async function renderOperationDetail(id) {
   shell(content, `/operations/${o.type}`, o.reference);
 }
 
-async function renderHistory() {
-  const rows = await api("/history");
+function renderHistory(rows) {
   const content = `${pageHead("Move history", "A permanent record of validated stock changes across every location.")}
     <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="history-search" placeholder="Search reference or SKU" aria-label="Search history"></label><select id="history-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="history-product" aria-label="Filter by product"><option value="">All products</option>${productOptions("").replace('<option value="">Select product</option>', "")}</select><span class="toolbar-count" id="history-count">Showing ${rows.length} movements</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Product</th><th>Warehouse</th><th>Location</th><th>Change</th><th>Balance</th></tr></thead><tbody id="history-rows">${historyRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="history-more" ${rows.length < 100 ? "hidden" : ""}>Load more movements</button><p class="table-note">Transfers appear twice: stock leaves one location and enters another. Their total change is zero.</p>`;
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Product</th><th>Warehouse</th><th>Location</th><th>Change</th><th>Balance</th></tr></thead><tbody id="history-rows">${historyRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="history-more" ${rows.length < pageSize ? "hidden" : ""}>Load more movements</button><p class="table-note">Transfers appear twice: stock leaves one location and enters another. Their total change is zero.</p>`;
   shell(content, "/history", "Move history");
 }
 function historyRows(rows) {
@@ -378,22 +399,27 @@ function historyRow(m) {
 
 function renderWarehouses() {
   const list = state.catalog.warehouses;
+  const locationsByWarehouse = new Map();
+  for (const location of state.catalog.locations) {
+    if (!locationsByWarehouse.has(location.warehouse_id))
+      locationsByWarehouse.set(location.warehouse_id, []);
+    locationsByWarehouse.get(location.warehouse_id).push(location);
+  }
   const content = `${pageHead("Warehouses & locations", "Organize stock by warehouse, room, rack, or any place your team counts.", button(`${icon("plus", 17)} Add warehouse`, "warehouse"))}
     ${
       list.length
         ? `<div class="warehouse-grid">${list
-            .map(
-              (w) =>
-                `<section class="warehouse-card"><div class="warehouse-title"><div class="warehouse-icon">${icon("warehouse", 23)}</div><div><h2>${escapeHtml(w.name)}</h2><span>${escapeHtml(w.code)}</span></div><button class="table-action warehouse-edit" data-action="edit-warehouse" data-id="${w.id}">Edit</button></div><p>${escapeHtml(w.address || "No address added")}</p><div class="warehouse-locations"><div class="warehouse-subhead">LOCATIONS <span>${state.catalog.locations.filter((l) => l.warehouse_id === w.id).length}</span></div>${state.catalog.locations
-                  .filter((l) => l.warehouse_id === w.id)
+            .map((w) => {
+              const locations = locationsByWarehouse.get(w.id) || [];
+              return `<section class="warehouse-card"><div class="warehouse-title"><div class="warehouse-icon">${icon("warehouse", 23)}</div><div><h2>${escapeHtml(w.name)}</h2><span>${escapeHtml(w.code)}</span></div><button class="table-action warehouse-edit" data-action="edit-warehouse" data-id="${w.id}">Edit</button></div><p>${escapeHtml(w.address || "No address added")}</p><div class="warehouse-locations"><div class="warehouse-subhead">LOCATIONS <span>${locations.length}</span></div>${locations
                   .map(
                     (l) =>
                       `<div><span>${escapeHtml(l.name)}</span><span class="location-meta"><code>${escapeHtml(l.code)}</code><button class="table-action" data-action="edit-location" data-id="${l.id}">Edit</button></span></div>`,
                   )
                   .join(
                     "",
-                  )}</div><button class="add-location" data-action="location" data-id="${w.id}">${icon("plus", 15)} Add location</button></section>`,
-            )
+                  )}</div><button class="add-location" data-action="location" data-id="${w.id}">${icon("plus", 15)} Add location</button></section>`;
+            })
             .join("")}</div>`
         : empty(
             "Start with a warehouse",
@@ -413,14 +439,36 @@ async function render() {
   if (!state.user) return renderAuth();
   const route = location.hash.slice(1) || "/dashboard";
   const id = ++state.renderId;
+  clearTimeout(changed.timer);
+  operationFilterController?.abort();
+  historyFilterController?.abort();
+  const current = () => id === state.renderId;
   try {
-    if (!state.catalog) await loadCatalog();
-    if (id !== state.renderId) return;
-    if (route === "/dashboard") return await renderDashboard();
-    if (route === "/products") return await renderProducts();
-    if (route === "/stock") return await renderStock();
-    if (route === "/history") return await renderHistory();
-    if (route === "/warehouses") return renderWarehouses();
+    if (route === "/dashboard") {
+      const data = await api("/dashboard");
+      if (current()) renderDashboard(data);
+      return;
+    }
+    if (route === "/products") {
+      const catalog = await loadCatalog();
+      if (current()) renderProducts(catalog.products);
+      return;
+    }
+    if (route === "/stock") {
+      const [rows] = await Promise.all([api("/stock"), loadCatalog()]);
+      if (current()) renderStock(rows);
+      return;
+    }
+    if (route === "/history") {
+      const [rows] = await Promise.all([api("/history"), loadCatalog()]);
+      if (current()) renderHistory(rows);
+      return;
+    }
+    if (route === "/warehouses") {
+      await loadCatalog();
+      if (current()) renderWarehouses();
+      return;
+    }
     if (route === "/profile") return renderProfile();
     const parts = route.split("/").filter(Boolean);
     if (
@@ -428,22 +476,39 @@ async function render() {
       ["all", "receipt", "delivery", "transfer", "adjustment"].includes(
         parts[1],
       )
-    )
-      return await renderOperations(parts[1]);
+    ) {
+      const kind = parts[1];
+      const [rows] = await Promise.all([
+        api("/operations" + queryString({ type: kind === "all" ? "" : kind })),
+        loadCatalog(),
+      ]);
+      if (current()) renderOperations(kind, rows);
+      return;
+    }
     if (
       parts[0] === "new" &&
       ["receipt", "delivery", "transfer", "adjustment"].includes(parts[1])
-    )
-      return operationForm(parts[1]);
-    if (parts[0] === "operation" && /^\d+$/.test(parts[1]))
-      return await renderOperationDetail(parts[1]);
+    ) {
+      await loadCatalog();
+      if (current()) operationForm(parts[1]);
+      return;
+    }
+    if (parts[0] === "operation" && /^\d+$/.test(parts[1])) {
+      const operation = await api(`/operations/${parts[1]}`);
+      if (current()) renderOperationDetail(operation);
+      return;
+    }
     if (parts[0] === "edit" && /^\d+$/.test(parts[1])) {
-      const o = await api(`/operations/${parts[1]}`);
-      return operationForm(o.type, o);
+      const [operation] = await Promise.all([
+        api(`/operations/${parts[1]}`),
+        loadCatalog(),
+      ]);
+      if (current()) operationForm(operation.type, operation);
+      return;
     }
     location.hash = "/dashboard";
   } catch (error) {
-    showNotice(error.message, true);
+    if (current()) showNotice(error.message, true);
   }
 }
 
@@ -553,8 +618,8 @@ async function submitForm(event) {
       state.user = result.user;
       state.csrf = result.csrf;
       state.catalog = null;
-      location.hash = "/dashboard";
-      await render();
+      if (location.hash === "#/dashboard") await render();
+      else location.hash = "/dashboard";
       return;
     }
     if (formId === "product-form") {
@@ -607,7 +672,7 @@ async function submitForm(event) {
       showNotice("Profile updated");
     }
     document.querySelector("#dialog")?.close();
-    state.catalog = null;
+    if (formId !== "profile-form") state.catalog = null;
     await render();
   } catch (error) {
     showNotice(error.message, true);
@@ -651,18 +716,44 @@ async function clickAction(event) {
     return;
   }
   if (action === "print") return window.print();
+  if (action === "operations-more") {
+    target.disabled = true;
+    try {
+      const count = document.querySelectorAll("#operation-rows tr").length;
+      const query = operationQuery(count);
+      const rows = await api("/operations" + query);
+      if (!target.isConnected || query !== operationQuery(count)) return;
+      if (rows.length)
+        document
+          .querySelector("#operation-rows")
+          .insertAdjacentHTML("beforeend", operationRows(rows, "all"));
+      document.querySelector("#operation-count").textContent =
+        `Showing ${count + rows.length} records`;
+      target.hidden = rows.length < pageSize;
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      target.disabled = false;
+    }
+    return;
+  }
   if (action === "history-more") {
+    target.disabled = true;
     try {
       const count = document.querySelectorAll("#history-rows tr").length;
-      const rows = await api("/history" + historyQuery(count));
+      const query = historyQuery(count);
+      const rows = await api("/history" + query);
+      if (!target.isConnected || query !== historyQuery(count)) return;
       document
         .querySelector("#history-rows")
         .insertAdjacentHTML("beforeend", rows.map(historyRow).join(""));
       document.querySelector("#history-count").textContent =
         `Showing ${count + rows.length} movements`;
-      target.hidden = rows.length < 100;
+      target.hidden = rows.length < pageSize;
     } catch (error) {
       showNotice(error.message, true);
+    } finally {
+      target.disabled = false;
     }
     return;
   }
@@ -706,44 +797,78 @@ async function clickAction(event) {
 function filterRows(inputId, rowId, fields) {
   const search =
     document.querySelector(`#${inputId}`)?.value.trim().toLowerCase() || "";
+  const selected = fields.map(([control, field]) => [
+    document.querySelector(`#${control}`)?.value || "",
+    field,
+  ]);
   const rows = document.querySelectorAll(`#${rowId} tr`);
   for (const row of rows) {
     const matchingText = (
       row.dataset.search || row.textContent.toLowerCase()
     ).includes(search);
-    const matchingFields = fields.every(([control, field]) => {
-      const value = document.querySelector(`#${control}`)?.value || "";
-      return !value || row.dataset[field] === value;
-    });
+    const matchingFields = selected.every(
+      ([value, field]) => !value || row.dataset[field] === value,
+    );
     row.hidden = !(matchingText && matchingFields);
   }
 }
 
-async function filterOperations() {
+function operationQuery(offset) {
   const route = location.hash.slice(1).split("/");
   const kind = route[2];
-  const query = queryString({
+  return queryString({
     type:
       kind === "all" ? document.querySelector("#operation-type")?.value : kind,
     status: document.querySelector("#operation-status")?.value,
     warehouse_id: document.querySelector("#operation-warehouse")?.value,
     category_id: document.querySelector("#operation-category")?.value,
     search: document.querySelector("#operation-search")?.value,
+    offset,
   });
-  const rows = await api("/operations" + query);
+}
+let operationFilterController;
+async function filterOperations() {
+  const kind = location.hash.slice(1).split("/")[2];
+  const query = operationQuery(0);
+  operationFilterController?.abort();
+  const controller = new AbortController();
+  operationFilterController = controller;
+  let rows;
+  try {
+    rows = await api("/operations" + query, { signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    throw error;
+  }
+  if (controller.signal.aborted) return;
   const tbody = document.querySelector("#operation-rows");
   if (tbody) tbody.innerHTML = operationRows(rows, kind);
   const count = document.querySelector("#operation-count");
-  if (count) count.textContent = `${rows.length} records`;
+  if (count) count.textContent = `Showing ${rows.length} records`;
+  const more = document.querySelector('[data-action="operations-more"]');
+  if (more) more.hidden = rows.length < pageSize;
 }
+let historyFilterController;
 async function filterHistory() {
-  const rows = await api("/history" + historyQuery(0));
+  historyFilterController?.abort();
+  const controller = new AbortController();
+  historyFilterController = controller;
+  let rows;
+  try {
+    rows = await api("/history" + historyQuery(0), {
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    throw error;
+  }
+  if (controller.signal.aborted) return;
   const tbody = document.querySelector("#history-rows");
   if (tbody) tbody.innerHTML = historyRows(rows);
   const count = document.querySelector("#history-count");
   if (count) count.textContent = `Showing ${rows.length} movements`;
   const more = document.querySelector('[data-action="history-more"]');
-  if (more) more.hidden = rows.length < 100;
+  if (more) more.hidden = rows.length < pageSize;
 }
 function historyQuery(offset) {
   return queryString({
@@ -755,6 +880,8 @@ function historyQuery(offset) {
 }
 function changed(event) {
   if (event.target.closest(".toolbar")) {
+    if (event.type === "input" && event.target.tagName !== "INPUT") return;
+    if (event.type === "change" && event.target.tagName === "INPUT") return;
     if (event.target.id.startsWith("product-"))
       filterRows("product-search", "product-rows", [
         ["product-category", "category"],
@@ -769,12 +896,13 @@ function changed(event) {
       event.target.id.startsWith("history-")
     ) {
       clearTimeout(changed.timer);
+      const isOperation = event.target.id.startsWith("operation-");
       changed.timer = setTimeout(() => {
-        const task = event.target.id.startsWith("operation-")
+        const task = isOperation
           ? filterOperations
           : filterHistory;
         task().catch((error) => showNotice(error.message, true));
-      }, 180);
+      }, event.type === "input" ? 180 : 0);
     }
   }
 }

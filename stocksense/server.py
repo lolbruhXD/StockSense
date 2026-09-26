@@ -1,5 +1,6 @@
 """Small HTTP API and static file server; no package installation required."""
 
+import gzip
 import hashlib
 import hmac
 import json
@@ -12,6 +13,7 @@ import traceback
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from functools import lru_cache
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +25,12 @@ from . import inventory
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 SESSION_DAYS = 7
+
+
+@lru_cache(maxsize=16)
+def static_body(path, modified_ns):
+    body = path.read_bytes()
+    return body, gzip.compress(body, compresslevel=5)
 
 
 def now():
@@ -73,9 +81,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def json_response(self, data, status=HTTPStatus.OK, cookie=None):
         body = json.dumps(data, separators=(",", ":")).encode()
+        compressed = len(body) >= 1024 and "gzip" in self.headers.get(
+            "Accept-Encoding", ""
+        ).lower()
+        if compressed:
+            body = gzip.compress(body, compresslevel=5)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Vary", "Accept-Encoding")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
         if cookie:
@@ -403,6 +419,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.param(query, "search"),
                     self.param(query, "warehouse_id"),
                     self.param(query, "category_id"),
+                    min(max(int(self.param(query, "limit") or 100), 1), 200),
+                    max(int(self.param(query, "offset") or 0), 0),
                 )
             )
         if path == "/api/operations" and method == "POST":
@@ -456,7 +474,20 @@ class Handler(BaseHTTPRequestHandler):
             requested = STATIC / "index.html"
         if not requested.is_relative_to(STATIC) or not requested.is_file():
             return self.json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)
-        body = requested.read_bytes()
+        info = requested.stat()
+        etag = f'W/"{info.st_mtime_ns:x}-{info.st_size:x}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(HTTPStatus.NOT_MODIFIED)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
+        plain, zipped = static_body(requested, info.st_mtime_ns)
+        compressed = len(plain) >= 1024 and "gzip" in self.headers.get(
+            "Accept-Encoding", ""
+        ).lower()
+        body = zipped if compressed else plain
         self.send_response(HTTPStatus.OK)
         self.send_header(
             "Content-Type",
@@ -464,6 +495,11 @@ class Handler(BaseHTTPRequestHandler):
         )
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",

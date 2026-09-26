@@ -294,7 +294,14 @@ def operation_detail(db, operation_id):
 
 
 def list_operations(
-    db, kind=None, status=None, search="", warehouse_id=None, category_id=None
+    db,
+    kind=None,
+    status=None,
+    search="",
+    warehouse_id=None,
+    category_id=None,
+    limit=None,
+    offset=0,
 ):
     query = """SELECT o.id,o.reference,o.type,o.status,o.partner,o.scheduled_date,o.created_at,
         o.from_location_id,o.to_location_id, fl.name from_location, fw.name from_warehouse,
@@ -323,6 +330,9 @@ def list_operations(
         query += " AND EXISTS (SELECT 1 FROM operation_lines line JOIN products p ON p.id=line.product_id WHERE line.operation_id=o.id AND p.category_id=?)"
         params.append(category_id)
     query += " GROUP BY o.id ORDER BY o.id DESC"
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
     return [dict(row) for row in db.execute(query, params)]
 
 
@@ -514,7 +524,7 @@ def dashboard(db):
             "SELECT type, COUNT(*) n FROM operations WHERE status NOT IN ('done','canceled') GROUP BY type"
         )
     }
-    recent = list_operations(db)[:8]
+    recent = list_operations(db, limit=8)
     return {
         "products_in_stock": sum(product["on_hand"] > 0 for product in products),
         "low_stock": sum(

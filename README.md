@@ -25,6 +25,8 @@ Draft and waiting operations can be edited. Canceled operations never change sto
 
 The **All operations** view filters by document type, status, warehouse, and category. Stock and products have SKU/name search; the move ledger has reference/SKU search and warehouse/product filters.
 
+Operations and move history load 100 rows at a time; use **Load more** to browse older records.
+
 ## Password reset
 
 One-time reset codes are valid for ten minutes and accept at most five attempts. To send them by email, configure SMTP before starting the server:
@@ -40,16 +42,6 @@ python3 -m stocksense.server
 
 For a local demo without email, set `STOCKSENSE_DEV_RESET_CODES=1`. The reset code is then shown in the browser only while the server is bound to loopback. Do not use that setting on a shared machine.
 
-## Test
-
-```bash
-python3 -m unittest discover -s tests -v
-node --check static/app.js
-```
-
-The tests cover receipt, delivery, transfer, adjustment, opening stock, duplicate validation, insufficient stock rollback, and warehouse editing.
-
 ## Scope and deployment
 
 The default server listens only on `127.0.0.1`. All accounts in one database share the same company inventory. For public deployment, add HTTPS, managed account provisioning, abuse protection, backups, and tenant separation if multiple businesses will use one server. The included HTTP server is designed for local or private-network use, not as a public internet edge server.
-
