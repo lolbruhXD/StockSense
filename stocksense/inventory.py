@@ -309,18 +309,21 @@ def list_operations(
     category_id=None,
     limit=None,
     offset=0,
+    before_id=None,
 ):
     query = """SELECT o.id,o.reference,o.type,o.status,o.partner,o.scheduled_date,o.created_at,
         o.from_location_id,o.to_location_id, fl.name from_location, fw.name from_warehouse,
         tl.name to_location, tw.name to_warehouse, u.name responsible,
-        COUNT(ol.id) line_count
+        (SELECT COUNT(*) FROM operation_lines ol WHERE ol.organization_id=o.organization_id AND ol.operation_id=o.id) line_count
         FROM operations o LEFT JOIN locations fl ON fl.id=o.from_location_id
         LEFT JOIN warehouses fw ON fw.id=fl.warehouse_id
         LEFT JOIN locations tl ON tl.id=o.to_location_id
         LEFT JOIN warehouses tw ON tw.id=tl.warehouse_id
-        LEFT JOIN users u ON u.id=o.responsible_id
-        LEFT JOIN operation_lines ol ON ol.operation_id=o.id WHERE o.organization_id=?"""
+        LEFT JOIN users u ON u.id=o.responsible_id WHERE o.organization_id=?"""
     params = [db.organization_id]
+    if before_id:
+        query += " AND o.id<?"
+        params.append(before_id)
     if kind:
         query += " AND o.type=?"
         params.append(kind)
@@ -334,12 +337,15 @@ def list_operations(
         query += " AND (fw.id=? OR tw.id=?)"
         params.extend([warehouse_id] * 2)
     if category_id:
-        query += " AND EXISTS (SELECT 1 FROM operation_lines line JOIN products p ON p.id=line.product_id WHERE line.operation_id=o.id AND p.category_id=?)"
+        query += " AND EXISTS (SELECT 1 FROM operation_lines line JOIN products p ON p.id=line.product_id WHERE line.organization_id=o.organization_id AND line.operation_id=o.id AND p.category_id=?)"
         params.append(category_id)
-    query += " GROUP BY o.id ORDER BY o.id DESC"
+    query += " ORDER BY o.id DESC"
     if limit is not None:
-        query += " LIMIT ? OFFSET ?"
-        params.extend((limit, offset))
+        query += " LIMIT ?"
+        params.append(limit)
+        if not before_id and offset:
+            query += " OFFSET ?"
+            params.append(offset)
     return [dict(row) for row in db.execute(query, params)]
 
 
@@ -501,7 +507,7 @@ def validate_operation(db, operation_id):
         )
 
 
-def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset=0):
+def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset=0, before_id=None):
     query = """SELECT m.id,m.created_at,m.operation_id,m.delta_milli,m.balance_milli,
         o.reference,o.type,o.status,p.id product_id,p.sku,p.name product,p.uom,
         l.id location_id,l.name location,w.id warehouse_id,w.name warehouse
@@ -509,6 +515,9 @@ def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset
         JOIN products p ON p.id=m.product_id JOIN locations l ON l.id=m.location_id
         JOIN warehouses w ON w.id=l.warehouse_id WHERE m.organization_id=?"""
     params = [db.organization_id]
+    if before_id:
+        query += " AND m.id<?"
+        params.append(before_id)
     if search:
         query += " AND (o.reference LIKE ? OR p.sku LIKE ? OR p.name LIKE ?)"
         params.extend([f"%{search}%"] * 3)
@@ -518,8 +527,11 @@ def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset
     if product_id:
         query += " AND p.id=?"
         params.append(product_id)
-    query += " ORDER BY m.id DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
+    query += " ORDER BY m.id DESC LIMIT ?"
+    params.append(limit)
+    if not before_id and offset:
+        query += " OFFSET ?"
+        params.append(offset)
     rows = []
     for row in db.execute(query, params):
         item = dict(row)

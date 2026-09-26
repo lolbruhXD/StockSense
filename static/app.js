@@ -336,7 +336,7 @@ function operationRows(rows, kind) {
     ? rows
         .map(
           (o) =>
-            `<tr><td><a class="row-link code" href="#/operation/${o.id}">${escapeHtml(o.reference)}</a></td><td>${escapeHtml(titleCase(o.type))}</td><td>${escapeHtml(movementEndpoint(o, "from"))}</td><td>${escapeHtml(movementEndpoint(o, "to"))}</td><td>${escapeHtml(o.partner || "—")}</td><td>${escapeHtml(o.scheduled_date || "—")}</td><td>${o.line_count}</td><td>${badge(o.status)}</td><td><a class="table-action" href="#/operation/${o.id}">Open ${icon("chevron", 14)}</a></td></tr>`,
+            `<tr data-id="${o.id}"><td><a class="row-link code" href="#/operation/${o.id}">${escapeHtml(o.reference)}</a></td><td>${escapeHtml(titleCase(o.type))}</td><td>${escapeHtml(movementEndpoint(o, "from"))}</td><td>${escapeHtml(movementEndpoint(o, "to"))}</td><td>${escapeHtml(o.partner || "—")}</td><td>${escapeHtml(o.scheduled_date || "—")}</td><td>${o.line_count}</td><td>${badge(o.status)}</td><td><a class="table-action" href="#/operation/${o.id}">Open ${icon("chevron", 14)}</a></td></tr>`,
         )
         .join("")
     : `<tr><td colspan="9">${empty(`No ${operationTitle(kind).toLowerCase()} yet`, `Create a ${kind === "all" ? "receipt" : kind} to get started.`, `<a class="btn secondary" href="#/new/${kind === "all" ? "receipt" : kind}">New ${kind === "all" ? "receipt" : kind}</a>`)}</td></tr>`;
@@ -431,7 +431,7 @@ function historyRows(rows) {
     : `<tr><td colspan="7">${empty("No movements yet", "Validated operations will appear here, with their exact stock effect.")}</td></tr>`;
 }
 function historyRow(m) {
-  return `<tr><td>${formatDate(m.created_at)}</td><td><a class="row-link code" href="#/operation/${m.operation_id}">${escapeHtml(m.reference)}</a></td><td><strong>${escapeHtml(m.product)}</strong><small class="sub-cell">${escapeHtml(m.sku)}</small></td><td>${escapeHtml(m.warehouse)}</td><td>${escapeHtml(m.location)}</td><td class="${m.delta >= 0 ? "positive" : "negative"}"><strong>${m.delta > 0 ? "+" : ""}${formatQuantity(m.delta)} ${escapeHtml(m.uom)}</strong></td><td>${formatQuantity(m.balance)} ${escapeHtml(m.uom)}</td></tr>`;
+  return `<tr data-id="${m.id}"><td>${formatDate(m.created_at)}</td><td><a class="row-link code" href="#/operation/${m.operation_id}">${escapeHtml(m.reference)}</a></td><td><strong>${escapeHtml(m.product)}</strong><small class="sub-cell">${escapeHtml(m.sku)}</small></td><td>${escapeHtml(m.warehouse)}</td><td>${escapeHtml(m.location)}</td><td class="${m.delta >= 0 ? "positive" : "negative"}"><strong>${m.delta > 0 ? "+" : ""}${formatQuantity(m.delta)} ${escapeHtml(m.uom)}</strong></td><td>${formatQuantity(m.balance)} ${escapeHtml(m.uom)}</td></tr>`;
 }
 
 function renderWarehouses() {
@@ -797,9 +797,10 @@ async function clickAction(event) {
     target.disabled = true;
     try {
       const count = document.querySelectorAll("#operation-rows tr").length;
-      const query = operationQuery(count);
+      const before = document.querySelector("#operation-rows tr:last-child")?.dataset.id;
+      const query = operationQuery(before);
       const rows = await api("/operations" + query);
-      if (!target.isConnected || query !== operationQuery(count)) return;
+      if (!target.isConnected || query !== operationQuery(before)) return;
       if (rows.length)
         document
           .querySelector("#operation-rows")
@@ -818,9 +819,10 @@ async function clickAction(event) {
     target.disabled = true;
     try {
       const count = document.querySelectorAll("#history-rows tr").length;
-      const query = historyQuery(count);
+      const before = document.querySelector("#history-rows tr:last-child")?.dataset.id;
+      const query = historyQuery(before);
       const rows = await api("/history" + query);
-      if (!target.isConnected || query !== historyQuery(count)) return;
+      if (!target.isConnected || query !== historyQuery(before)) return;
       document
         .querySelector("#history-rows")
         .insertAdjacentHTML("beforeend", rows.map(historyRow).join(""));
@@ -921,7 +923,7 @@ async function filterStock() {
   if (more) more.hidden = rows.length < pageSize;
 }
 
-function operationQuery(offset) {
+function operationQuery(beforeId = 0) {
   const route = location.hash.slice(1).split("/");
   const kind = route[2];
   return queryString({
@@ -931,7 +933,7 @@ function operationQuery(offset) {
     warehouse_id: document.querySelector("#operation-warehouse")?.value,
     category_id: document.querySelector("#operation-category")?.value,
     search: document.querySelector("#operation-search")?.value,
-    offset,
+    before_id: beforeId,
   });
 }
 let operationFilterController;
@@ -978,9 +980,9 @@ async function filterHistory() {
   const more = document.querySelector('[data-action="history-more"]');
   if (more) more.hidden = rows.length < pageSize;
 }
-function historyQuery(offset) {
+function historyQuery(beforeId = 0) {
   return queryString({
-    offset,
+    before_id: beforeId,
     search: document.querySelector("#history-search")?.value,
     warehouse_id: document.querySelector("#history-warehouse")?.value,
     product_id: document.querySelector("#history-product")?.value,

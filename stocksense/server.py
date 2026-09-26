@@ -478,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.param(query, "category_id"),
                     min(max(int(self.param(query, "limit") or 100), 1), 200),
                     max(int(self.param(query, "offset") or 0), 0),
+                    max(int(self.param(query, "before_id") or 0), 0),
                 )
             )
         if path == "/api/operations" and method == "POST":
@@ -517,6 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.param(query, "product_id"),
                     min(max(int(self.param(query, "limit") or 100), 1), 200),
                     max(int(self.param(query, "offset") or 0), 0),
+                    max(int(self.param(query, "before_id") or 0), 0),
                 )
             )
         return self.json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)

@@ -145,9 +145,11 @@ CREATE TABLE IF NOT EXISTS movements (
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_invitations_company ON invitations(organization_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_operations_type_status ON operations(organization_id, type, status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_operations_company_id ON operations(organization_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_operations_pending_type ON operations(organization_id, type)
     WHERE status NOT IN ('done','canceled');
 CREATE INDEX IF NOT EXISTS idx_movements_product_date ON movements(organization_id, product_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_movements_company_id ON movements(organization_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_levels_location ON stock_levels(organization_id, location_id, product_id);
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(organization_id, name, id);
 """
