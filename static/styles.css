@@ -1247,6 +1247,22 @@ tr[hidden] {
   font-size: 11px;
   margin: -4px 0 0;
 }
+.profile-panel #invite-form {
+  border-top: 1px solid var(--line);
+  margin-top: 28px;
+  padding-top: 24px;
+}
+.profile-panel #invite-form h2 {
+  font-size: 18px;
+  margin: 0;
+}
+#invite-result {
+  display: grid;
+  gap: 10px;
+}
+#invite-result[hidden] {
+  display: none;
+}
 .profile-actions {
   display: flex;
   gap: 9px;

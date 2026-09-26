@@ -10,6 +10,8 @@ const state = {
   devResetCode: "",
 };
 const pageSize = 100;
+const invitation = new URLSearchParams(location.hash.split("?")[1] || "");
+if (invitation.has("invite")) state.authMode = "signup";
 
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -170,10 +172,11 @@ function renderAuth() {
   state.renderId++;
   const mode = state.authMode;
   const signup = mode === "signup";
+  const invited = signup && invitation.has("invite");
   const reset = mode === "reset" || mode === "reset-confirm";
-  app.innerHTML = `<div class="auth-layout"><div class="auth-story"><div class="auth-brand"><span class="brand-mark"><span></span><span></span><span></span></span>Stock<span>Sense</span></div><div class="auth-copy"><span class="story-rule"></span><h1>Every item<br>has a story.</h1><p>Keep its movement clear, from arrival to delivery. One reliable view of your stock, across every location.</p></div><div class="auth-foot">RECEIVE <span>→</span> MOVE <span>→</span> DELIVER <span>→</span> ACCOUNT FOR IT</div></div>
-    <div class="auth-panel"><div class="auth-card"><div class="eyebrow">WELCOME TO STOCKSENSE</div><h2>${signup ? "Create your workspace" : reset ? "Reset your password" : "Welcome back"}</h2><p class="auth-sub">${signup ? "Set up your account to start tracking stock." : reset ? "We will help you get back into your workspace." : "Sign in to see what is moving today."}</p>
-      <form id="auth-form">${signup ? '<label>Your name<input name="name" required autocomplete="name" placeholder="Alex Morgan"></label>' : ""}<label>Email address<input name="email" type="email" required autocomplete="email" placeholder="you@company.com"></label>${mode === "reset-confirm" ? `<label>Six digit code<input name="code" inputmode="numeric" pattern="[0-9]{6}" required placeholder="000000"></label>${state.devResetCode ? `<p class="dev-code">Local development code: <strong>${escapeHtml(state.devResetCode)}</strong></p>` : ""}` : ""}${mode === "login" || signup || mode === "reset-confirm" ? `<label>${mode === "reset-confirm" ? "New password" : "Password"}<input name="password" type="password" required minlength="10" autocomplete="${signup ? "new-password" : "current-password"}" placeholder="At least 10 characters"></label>` : ""}<button class="btn primary auth-submit" type="submit">${signup ? "Create account" : mode === "reset" ? "Send reset code" : mode === "reset-confirm" ? "Update password" : "Sign in"} ${icon("chevron", 17)}</button></form>
+  app.innerHTML = `<div class="auth-layout"><div class="auth-story"><div class="auth-brand"><span class="brand-mark"><span></span><span></span><span></span>Stock<span>Sense</span></div><div class="auth-copy"><span class="story-rule"></span><h1>Every item<br>has a story.</h1><p>Keep its movement clear, from arrival to delivery. One reliable view of your stock, across every location.</p></div><div class="auth-foot">RECEIVE <span>→</span> MOVE <span>→</span> DELIVER <span>→</span> ACCOUNT FOR IT</div></div>
+    <div class="auth-panel"><div class="auth-card"><div class="eyebrow">WELCOME TO STOCKSENSE</div><h2>${invited ? "Join your team" : signup ? "Create your workspace" : reset ? "Reset your password" : "Welcome back"}</h2><p class="auth-sub">${invited ? "Create an account to join your company's workspace." : signup ? "Set up your account to start tracking stock." : reset ? "We will help you get back into your workspace." : "Sign in to see what is moving today."}</p>
+      <form id="auth-form">${signup ? `<label>Your name<input name="name" required autocomplete="name" placeholder="Alex Morgan"></label>${invited ? "" : '<label>Company name<input name="company" required autocomplete="organization" placeholder="Acme Supply"></label>'}` : ""}<label>Email address<input name="email" type="email" required autocomplete="email" value="${escapeHtml(invited ? invitation.get("email") : "")}" placeholder="you@company.com"></label>${mode === "reset-confirm" ? `<label>Six digit code<input name="code" inputmode="numeric" pattern="[0-9]{6}" required placeholder="000000"></label>${state.devResetCode ? `<p class="dev-code">Local development code: <strong>${escapeHtml(state.devResetCode)}</strong></p>` : ""}` : ""}${mode === "login" || signup || mode === "reset-confirm" ? `<label>${mode === "reset-confirm" ? "New password" : "Password"}<input name="password" type="password" required minlength="10" autocomplete="${signup ? "new-password" : "current-password"}" placeholder="At least 10 characters"></label>` : ""}<button class="btn primary auth-submit" type="submit">${invited ? "Join workspace" : signup ? "Create account" : mode === "reset" ? "Send reset code" : mode === "reset-confirm" ? "Update password" : "Sign in"} ${icon("chevron", 17)}</button></form>
       <div class="auth-switch">${mode === "login" ? `<button data-auth="reset">Forgot password?</button><span>New here? <button data-auth="signup">Create an account</button></span>` : `<button data-auth="login">Back to sign in</button>${mode === "reset" ? '<button data-auth="reset-confirm">I have a code</button>' : ""}`}</div></div><div class="auth-panel-foot">Built for the people who keep things moving.</div></div></div>`;
 }
 
@@ -466,7 +469,7 @@ function renderWarehouses() {
 }
 
 function renderProfile() {
-  const content = `${pageHead("My profile", "Keep your account details up to date.")}<div class="profile-panel"><div class="profile-avatar">${escapeHtml(state.user.name[0].toUpperCase())}</div><form id="profile-form"><label class="field">Full name<input name="name" required value="${escapeHtml(state.user.name)}"></label><label class="field">Email address<input value="${escapeHtml(state.user.email)}" disabled></label><p>Your email is used for sign-in and password recovery.</p><div class="profile-actions"><button class="btn primary" type="submit">Save profile</button><button class="btn secondary" type="button" data-action="logout">Sign out</button></div></form></div>`;
+  const content = `${pageHead("My profile", "Keep your account details up to date.")}<div class="profile-panel"><div class="profile-avatar">${escapeHtml(state.user.name[0].toUpperCase())}</div><form id="profile-form"><label class="field">Full name<input name="name" required value="${escapeHtml(state.user.name)}"></label><label class="field">Company<input value="${escapeHtml(state.user.company)}" disabled></label><label class="field">Email address<input value="${escapeHtml(state.user.email)}" disabled></label><p>Your email is used for sign-in and password recovery.</p><div class="profile-actions"><button class="btn primary" type="submit">Save profile</button><button class="btn secondary" type="button" data-action="logout">Sign out</button></div></form><form id="invite-form"><h2>Invite a teammate</h2><p>Create a link for someone to join ${escapeHtml(state.user.company)}. The link expires in seven days and only works with their email address.</p><label class="field">Teammate's email<input name="email" type="email" required placeholder="teammate@company.com"></label><button class="btn secondary" type="submit">Create invitation</button><div id="invite-result" hidden><label class="field">Invitation link<input id="invite-link" readonly aria-label="Invitation link"></label><button class="btn secondary" type="button" data-action="copy-invite">Copy link</button></div></form></div>`;
   shell(content, "/profile", "My profile");
 }
 
@@ -616,6 +619,7 @@ async function submitForm(event) {
       "location-form",
       "operation-form",
       "profile-form",
+      "invite-form",
     ].includes(formId)
   )
     return;
@@ -636,7 +640,7 @@ async function submitForm(event) {
               : "/password-reset/confirm";
       const result = await api(path, {
         method: "POST",
-        body: JSON.stringify(values),
+        body: JSON.stringify(mode === "signup" && invitation.has("invite") ? { ...values, invite_token: invitation.get("invite") } : values),
       });
       if (mode === "reset") {
         state.authMode = "reset-confirm";
@@ -656,6 +660,17 @@ async function submitForm(event) {
       clearCatalog();
       if (location.hash === "#/dashboard") await render();
       else location.hash = "/dashboard";
+      return;
+    }
+    if (formId === "invite-form") {
+      const result = await api("/invitations", {
+        method: "POST",
+        body: JSON.stringify(values),
+      });
+      const link = `${location.origin}${location.pathname}#/signup?invite=${encodeURIComponent(result.token)}&email=${encodeURIComponent(values.email)}`;
+      document.querySelector("#invite-link").value = link;
+      document.querySelector("#invite-result").hidden = false;
+      showNotice("Invitation link is ready to share");
       return;
     }
     if (formId === "product-form") {
@@ -728,6 +743,11 @@ async function clickAction(event) {
   }
   if (action === "menu")
     return document.querySelector(".shell")?.classList.toggle("menu-open");
+  if (action === "copy-invite") {
+    await navigator.clipboard.writeText(document.querySelector("#invite-link").value);
+    showNotice("Invitation link copied");
+    return;
+  }
   if (action === "close-modal")
     return document.querySelector("#dialog")?.close();
   if (action === "product") return productModal();

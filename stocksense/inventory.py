@@ -1,7 +1,5 @@
 """Inventory rules. Every posted movement and its stock update share one transaction."""
 
-import sqlite3
-
 from .database import milli, money_cents, quantity, transaction
 
 
@@ -18,7 +16,10 @@ def required(data, key, label=None):
 
 def exists(db, table, item_id):
     # All callers pass a fixed table name, never request data.
-    row = db.execute(f"SELECT id FROM {table} WHERE id = ?", (item_id,)).fetchone()
+    row = db.execute(
+        f"SELECT id FROM {table} WHERE id=? AND organization_id=?",
+        (item_id, db.organization_id),
+    ).fetchone()
     if not row:
         raise InventoryError(f"{table[:-1].title()} not found")
     return item_id
@@ -29,12 +30,12 @@ def create_warehouse(db, data):
     code = required(data, "code").upper()
     with transaction(db):
         cursor = db.execute(
-            "INSERT INTO warehouses(name, code, address) VALUES (?, ?, ?)",
-            (name, code, str(data.get("address", "")).strip()),
+            "INSERT INTO warehouses(organization_id, name, code, address) VALUES (?, ?, ?, ?)",
+            (db.organization_id, name, code, str(data.get("address", "")).strip()),
         )
         db.execute(
-            "INSERT INTO locations(warehouse_id, name, code) VALUES (?, 'Main stock', 'MAIN')",
-            (cursor.lastrowid,),
+            "INSERT INTO locations(organization_id, warehouse_id, name, code) VALUES (?, ?, 'Main stock', 'MAIN')",
+            (db.organization_id, cursor.lastrowid),
         )
     return cursor.lastrowid
 
@@ -43,8 +44,8 @@ def create_location(db, data):
     warehouse_id = exists(db, "warehouses", int(data.get("warehouse_id") or 0))
     with transaction(db):
         cursor = db.execute(
-            "INSERT INTO locations(warehouse_id, name, code) VALUES (?, ?, ?)",
-            (warehouse_id, required(data, "name"), required(data, "code").upper()),
+            "INSERT INTO locations(organization_id, warehouse_id, name, code) VALUES (?, ?, ?, ?)",
+            (db.organization_id, warehouse_id, required(data, "name"), required(data, "code").upper()),
         )
     return cursor.lastrowid
 
@@ -53,12 +54,13 @@ def update_warehouse(db, warehouse_id, data):
     exists(db, "warehouses", warehouse_id)
     with transaction(db):
         db.execute(
-            "UPDATE warehouses SET name=?, code=?, address=? WHERE id=?",
+            "UPDATE warehouses SET name=?, code=?, address=? WHERE id=? AND organization_id=?",
             (
                 required(data, "name"),
                 required(data, "code").upper(),
                 str(data.get("address", "")).strip(),
                 warehouse_id,
+                db.organization_id,
             ),
         )
 
@@ -67,15 +69,16 @@ def update_location(db, location_id, data):
     exists(db, "locations", location_id)
     with transaction(db):
         db.execute(
-            "UPDATE locations SET name=?, code=? WHERE id=?",
-            (required(data, "name"), required(data, "code").upper(), location_id),
+            "UPDATE locations SET name=?, code=? WHERE id=? AND organization_id=?",
+            (required(data, "name"), required(data, "code").upper(), location_id, db.organization_id),
         )
 
 
 def create_category(db, data):
     with transaction(db):
         cursor = db.execute(
-            "INSERT INTO categories(name) VALUES (?)", (required(data, "name"),)
+            "INSERT INTO categories(organization_id, name) VALUES (?, ?)",
+            (db.organization_id, required(data, "name")),
         )
     return cursor.lastrowid
 
@@ -90,9 +93,10 @@ def create_product(db, data):
     )
     with transaction(db):
         cursor = db.execute(
-            """INSERT INTO products(sku, name, category_id, uom, unit_cost_cents, reorder_milli)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO products(organization_id, sku, name, category_id, uom, unit_cost_cents, reorder_milli)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
+                db.organization_id,
                 required(data, "sku").upper(),
                 required(data, "name"),
                 category_id,
@@ -104,18 +108,18 @@ def create_product(db, data):
         if opening:
             product_id = cursor.lastrowid
             operation = db.execute(
-                """INSERT INTO operations(reference,type,status,from_location_id,note)
-                VALUES ('PENDING','adjustment','done',?,'Opening stock')""",
-                (opening_location,),
+                """INSERT INTO operations(organization_id,reference,type,status,from_location_id,note)
+                VALUES (?,'PENDING','adjustment','done',?,'Opening stock')""",
+                (db.organization_id, opening_location),
             )
             operation_id = operation.lastrowid
             db.execute(
-                "UPDATE operations SET reference=? WHERE id=?",
-                (f"ADJ/{operation_id:05d}", operation_id),
+                "UPDATE operations SET reference=? WHERE id=? AND organization_id=?",
+                (f"ADJ/{operation_id:05d}", operation_id, db.organization_id),
             )
             db.execute(
-                "INSERT INTO operation_lines(operation_id,product_id,quantity_milli) VALUES (?,?,?)",
-                (operation_id, product_id, opening),
+                "INSERT INTO operation_lines(organization_id,operation_id,product_id,quantity_milli) VALUES (?,?,?,?)",
+                (db.organization_id, operation_id, product_id, opening),
             )
             _apply(db, operation_id, product_id, opening_location, opening)
     return cursor.lastrowid
@@ -129,7 +133,7 @@ def update_product(db, product_id, data):
     with transaction(db):
         db.execute(
             """UPDATE products SET sku=?, name=?, category_id=?, uom=?,
-               unit_cost_cents=?, reorder_milli=?, active=? WHERE id=?""",
+               unit_cost_cents=?, reorder_milli=?, active=? WHERE id=? AND organization_id=?""",
             (
                 required(data, "sku").upper(),
                 required(data, "name"),
@@ -139,6 +143,7 @@ def update_product(db, product_id, data):
                 milli(data.get("reorder_point", 0), allow_zero=True),
                 1 if data.get("active", True) else 0,
                 product_id,
+                db.organization_id,
             ),
         )
 
@@ -148,9 +153,9 @@ def list_products(db, search="", category_id=None):
         COALESCE(SUM(s.quantity_milli), 0) on_hand_milli
         FROM products p LEFT JOIN categories c ON c.id=p.category_id
         LEFT JOIN stock_levels s ON s.product_id=p.id
-        WHERE (p.sku LIKE ? OR p.name LIKE ?)"""
+        WHERE p.organization_id=? AND (p.sku LIKE ? OR p.name LIKE ?)"""
     term = f"%{search.strip()}%"
-    params = [term, term]
+    params = [db.organization_id, term, term]
     if category_id:
         query += " AND p.category_id=?"
         params.append(category_id)
@@ -175,8 +180,8 @@ def stock(db, search="", warehouse_id=None, category_id=None, limit=100, offset=
         JOIN locations l ON l.id=s.location_id
         JOIN warehouses w ON w.id=l.warehouse_id
         LEFT JOIN categories c ON c.id=p.category_id
-        WHERE p.active=1 AND (p.sku LIKE ? OR p.name LIKE ?)"""
-    params = [f"%{search.strip()}%"] * 2
+        WHERE s.organization_id=? AND p.active=1 AND (p.sku LIKE ? OR p.name LIKE ?)"""
+    params = [db.organization_id] + [f"%{search.strip()}%"] * 2
     if warehouse_id:
         query += " AND w.id=?"
         params.append(warehouse_id)
@@ -230,10 +235,11 @@ def create_operation(db, data, user_id):
         )
     with transaction(db):
         cursor = db.execute(
-            """INSERT INTO operations(reference,type,from_location_id,to_location_id,
+            """INSERT INTO operations(organization_id,reference,type,from_location_id,to_location_id,
                partner,scheduled_date,responsible_id,note)
-               VALUES ('PENDING',?,?,?,?,?,?,?)""",
+               VALUES (?,'PENDING',?,?,?,?,?,?,?)""",
             (
+                db.organization_id,
                 kind,
                 source,
                 destination,
@@ -251,12 +257,12 @@ def create_operation(db, data, user_id):
             "adjustment": "ADJ",
         }[kind]
         db.execute(
-            "UPDATE operations SET reference=? WHERE id=?",
-            (f"{prefix}/{operation_id:05d}", operation_id),
+            "UPDATE operations SET reference=? WHERE id=? AND organization_id=?",
+            (f"{prefix}/{operation_id:05d}", operation_id, db.organization_id),
         )
         db.executemany(
-            "INSERT INTO operation_lines(operation_id,product_id,quantity_milli) VALUES (?,?,?)",
-            [(operation_id, product_id, amount) for product_id, amount in parsed],
+            "INSERT INTO operation_lines(organization_id,operation_id,product_id,quantity_milli) VALUES (?,?,?,?)",
+            [(db.organization_id, operation_id, product_id, amount) for product_id, amount in parsed],
         )
     return operation_id
 
@@ -270,8 +276,8 @@ def operation_detail(db, operation_id):
            LEFT JOIN warehouses fw ON fw.id=fl.warehouse_id
            LEFT JOIN locations tl ON tl.id=o.to_location_id
            LEFT JOIN warehouses tw ON tw.id=tl.warehouse_id
-           WHERE o.id=?""",
-        (operation_id,),
+           WHERE o.id=? AND o.organization_id=?""",
+        (operation_id, db.organization_id),
     ).fetchone()
     if not row:
         raise InventoryError("Operation not found")
@@ -287,8 +293,8 @@ def operation_detail(db, operation_id):
         }
         for line in db.execute(
             """SELECT ol.*, p.sku, p.name, p.uom FROM operation_lines ol
-            JOIN products p ON p.id=ol.product_id WHERE ol.operation_id=? ORDER BY ol.id""",
-            (operation_id,),
+            JOIN products p ON p.id=ol.product_id WHERE ol.operation_id=? AND ol.organization_id=? ORDER BY ol.id""",
+            (operation_id, db.organization_id),
         )
     ]
     return item
@@ -313,8 +319,8 @@ def list_operations(
         LEFT JOIN locations tl ON tl.id=o.to_location_id
         LEFT JOIN warehouses tw ON tw.id=tl.warehouse_id
         LEFT JOIN users u ON u.id=o.responsible_id
-        LEFT JOIN operation_lines ol ON ol.operation_id=o.id WHERE 1=1"""
-    params = []
+        LEFT JOIN operation_lines ol ON ol.operation_id=o.id WHERE o.organization_id=?"""
+    params = [db.organization_id]
     if kind:
         query += " AND o.type=?"
         params.append(kind)
@@ -373,13 +379,14 @@ def update_operation(db, operation_id, data):
         )
     with transaction(db):
         latest = db.execute(
-            "SELECT status FROM operations WHERE id=?", (operation_id,)
+            "SELECT status FROM operations WHERE id=? AND organization_id=?",
+            (operation_id, db.organization_id),
         ).fetchone()[0]
         if latest not in ("draft", "waiting"):
             raise InventoryError("Only draft or waiting operations can be edited")
         db.execute(
             """UPDATE operations SET from_location_id=?, to_location_id=?, partner=?,
-            scheduled_date=?, note=?, updated_at=datetime('now') WHERE id=?""",
+            scheduled_date=?, note=?, updated_at=datetime('now') WHERE id=? AND organization_id=?""",
             (
                 source,
                 destination,
@@ -387,12 +394,13 @@ def update_operation(db, operation_id, data):
                 str(data.get("scheduled_date", "")).strip(),
                 str(data.get("note", "")).strip(),
                 operation_id,
+                db.organization_id,
             ),
         )
-        db.execute("DELETE FROM operation_lines WHERE operation_id=?", (operation_id,))
+        db.execute("DELETE FROM operation_lines WHERE operation_id=? AND organization_id=?", (operation_id, db.organization_id))
         db.executemany(
-            "INSERT INTO operation_lines(operation_id,product_id,quantity_milli) VALUES (?,?,?)",
-            parsed,
+            "INSERT INTO operation_lines(organization_id,operation_id,product_id,quantity_milli) VALUES (?,?,?,?)",
+            [(db.organization_id, *line) for line in parsed],
         )
 
 
@@ -416,8 +424,8 @@ def set_status(db, operation_id, action):
             if action == "pack" and not item["picked"]:
                 raise InventoryError("Pick the items before packing")
             db.execute(
-                f"UPDATE operations SET {'picked' if action == 'pick' else 'packed'}=1, updated_at=datetime('now') WHERE id=?",
-                (operation_id,),
+                f"UPDATE operations SET {'picked' if action == 'pick' else 'packed'}=1, updated_at=datetime('now') WHERE id=? AND organization_id=?",
+                (operation_id, db.organization_id),
             )
             return
         if not next_status:
@@ -425,36 +433,37 @@ def set_status(db, operation_id, action):
         if next_status == "ready" and item["type"] == "delivery" and not item["packed"]:
             raise InventoryError("Pick and pack the delivery before marking it ready")
         db.execute(
-            "UPDATE operations SET status=?, updated_at=datetime('now') WHERE id=?",
-            (next_status, operation_id),
+            "UPDATE operations SET status=?, updated_at=datetime('now') WHERE id=? AND organization_id=?",
+            (next_status, operation_id, db.organization_id),
         )
 
 
 def _apply(db, operation_id, product_id, location_id, delta):
     if delta >= 0:
         row = db.execute(
-            """INSERT INTO stock_levels(product_id,location_id,quantity_milli)
-            VALUES (?,?,?) ON CONFLICT(product_id,location_id)
+            """INSERT INTO stock_levels(organization_id,product_id,location_id,quantity_milli)
+            VALUES (?,?,?,?) ON CONFLICT(organization_id,product_id,location_id)
             DO UPDATE SET quantity_milli=stock_levels.quantity_milli+excluded.quantity_milli
             RETURNING quantity_milli""",
-            (product_id, location_id, delta),
+            (db.organization_id, product_id, location_id, delta),
         ).fetchone()
     else:
         row = db.execute(
             """UPDATE stock_levels SET quantity_milli=quantity_milli+?
-            WHERE product_id=? AND location_id=? AND quantity_milli>=?
+            WHERE organization_id=? AND product_id=? AND location_id=? AND quantity_milli>=?
             RETURNING quantity_milli""",
-            (delta, product_id, location_id, -delta),
+            (delta, db.organization_id, product_id, location_id, -delta),
         ).fetchone()
     if not row:
         product = db.execute(
-            "SELECT sku FROM products WHERE id=?", (product_id,)
+            "SELECT sku FROM products WHERE id=? AND organization_id=?",
+            (product_id, db.organization_id),
         ).fetchone()[0]
         raise InventoryError(f"Not enough {product} at the selected location")
     db.execute(
-        """INSERT INTO movements(operation_id,product_id,location_id,delta_milli,balance_milli)
-        VALUES (?,?,?,?,?)""",
-        (operation_id, product_id, location_id, delta, row["quantity_milli"]),
+        """INSERT INTO movements(organization_id,operation_id,product_id,location_id,delta_milli,balance_milli)
+        VALUES (?,?,?,?,?,?)""",
+        (db.organization_id, operation_id, product_id, location_id, delta, row["quantity_milli"]),
     )
 
 
@@ -475,8 +484,8 @@ def validate_operation(db, operation_id):
                 _apply(db, operation_id, product_id, item["to_location_id"], amount)
             else:
                 row = db.execute(
-                    "SELECT quantity_milli FROM stock_levels WHERE product_id=? AND location_id=?",
-                    (product_id, item["from_location_id"]),
+                    "SELECT quantity_milli FROM stock_levels WHERE organization_id=? AND product_id=? AND location_id=?",
+                    (db.organization_id, product_id, item["from_location_id"]),
                 ).fetchone()
                 current = row[0] if row else 0
                 _apply(
@@ -487,8 +496,8 @@ def validate_operation(db, operation_id):
                     amount - current,
                 )
         db.execute(
-            "UPDATE operations SET status='done', updated_at=datetime('now') WHERE id=?",
-            (operation_id,),
+            "UPDATE operations SET status='done', updated_at=datetime('now') WHERE id=? AND organization_id=?",
+            (operation_id, db.organization_id),
         )
 
 
@@ -498,8 +507,8 @@ def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset
         l.id location_id,l.name location,w.id warehouse_id,w.name warehouse
         FROM movements m JOIN operations o ON o.id=m.operation_id
         JOIN products p ON p.id=m.product_id JOIN locations l ON l.id=m.location_id
-        JOIN warehouses w ON w.id=l.warehouse_id WHERE 1=1"""
-    params = []
+        JOIN warehouses w ON w.id=l.warehouse_id WHERE m.organization_id=?"""
+    params = [db.organization_id]
     if search:
         query += " AND (o.reference LIKE ? OR p.sku LIKE ? OR p.name LIKE ?)"
         params.extend([f"%{search}%"] * 3)
@@ -521,12 +530,14 @@ def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset
 
 
 def dashboard(db):
-    totals = "SELECT product_id, SUM(quantity_milli) on_hand_milli FROM stock_levels GROUP BY product_id"
+    totals = "SELECT product_id, SUM(quantity_milli) on_hand_milli FROM stock_levels WHERE organization_id=? GROUP BY product_id"
     product_counts = db.execute(
         f"""SELECT
             COALESCE(SUM(CASE WHEN COALESCE(s.on_hand_milli,0)>0 THEN 1 ELSE 0 END),0) products_in_stock,
             COALESCE(SUM(CASE WHEN p.active=1 AND COALESCE(s.on_hand_milli,0)<=p.reorder_milli THEN 1 ELSE 0 END),0) low_stock
-            FROM products p LEFT JOIN ({totals}) s ON s.product_id=p.id"""
+            FROM products p LEFT JOIN ({totals}) s ON s.product_id=p.id
+            WHERE p.organization_id=?""",
+        (db.organization_id, db.organization_id),
     ).fetchone()
     low_stock_products = []
     for row in db.execute(
@@ -534,8 +545,9 @@ def dashboard(db):
             COALESCE(s.on_hand_milli,0) on_hand_milli
             FROM products p LEFT JOIN ({totals}) s ON s.product_id=p.id
             LEFT JOIN categories c ON c.id=p.category_id
-            WHERE p.active=1 AND COALESCE(s.on_hand_milli,0)<=p.reorder_milli
-            ORDER BY p.name LIMIT 6"""
+            WHERE p.organization_id=? AND p.active=1 AND COALESCE(s.on_hand_milli,0)<=p.reorder_milli
+            ORDER BY p.name LIMIT 6""",
+        (db.organization_id, db.organization_id),
     ):
         item = dict(row)
         item["on_hand"] = quantity(item.pop("on_hand_milli"))
@@ -543,7 +555,8 @@ def dashboard(db):
     counts = {
         row["type"]: row["n"]
         for row in db.execute(
-            "SELECT type, COUNT(*) n FROM operations WHERE status NOT IN ('done','canceled') GROUP BY type"
+            "SELECT type, COUNT(*) n FROM operations WHERE organization_id=? AND status NOT IN ('done','canceled') GROUP BY type",
+            (db.organization_id,),
         )
     }
     recent = list_operations(db, limit=8)
@@ -564,7 +577,7 @@ def friendly_integrity_error(error):
         return InventoryError("That SKU is already in use")
     if (
         "warehouses.code" in message
-        or "locations.warehouse_id, locations.code" in message
+        or "locations.code" in message
     ):
         return InventoryError("That code is already in use")
     if "categories.name" in message:

@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .database import connect, initialize
+from .database import connect, initialize, transaction
 from . import inventory
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -48,7 +48,7 @@ def password_digest(password, salt):
 
 
 def public_user(row):
-    return {"id": row["id"], "name": row["name"], "email": row["email"]}
+    return {"id": row["id"], "name": row["name"], "email": row["email"], "company": row["company"]}
 
 
 def mail_reset_code(email, code):
@@ -120,8 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             return None
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         row = db.execute(
-            """SELECT s.*, u.name, u.email FROM sessions s
-            JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?""",
+            """SELECT s.*, u.name, u.email, u.organization_id, o.name company FROM sessions s
+            JOIN users u ON u.id=s.user_id
+            JOIN organizations o ON o.id=u.organization_id
+            WHERE s.token_hash=? AND s.expires_at>?""",
             (token_hash, stamp(now())),
         ).fetchone()
         return row
@@ -129,7 +131,6 @@ class Handler(BaseHTTPRequestHandler):
     def new_session(self, db, user_id):
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(24)
-        db.execute("DELETE FROM sessions WHERE expires_at<=?", (stamp(now()),))
         db.execute(
             "INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at) VALUES (?,?,?,?)",
             (
@@ -201,6 +202,7 @@ class Handler(BaseHTTPRequestHandler):
                             "id": session["user_id"],
                             "name": session["name"],
                             "email": session["email"],
+                            "company": session["company"],
                         }
                     ),
                     "csrf": session["csrf_token"],
@@ -217,14 +219,38 @@ class Handler(BaseHTTPRequestHandler):
                     "Use a valid email and a password of at least 10 characters"
                 )
             salt = secrets.token_hex(16)
-            cursor = db.execute(
-                "INSERT INTO users(name,email,password_hash,salt) VALUES (?,?,?,?)",
-                (name, email, password_digest(password, salt), salt),
-            )
-            csrf, cookie = self.new_session(db, cursor.lastrowid)
+            with transaction(db):
+                invite_token = str(data.get("invite_token", ""))
+                if invite_token:
+                    token_hash = hashlib.sha256(invite_token.encode()).hexdigest()
+                    invite = db.execute(
+                        """SELECT i.organization_id, o.name company FROM invitations i
+                        JOIN organizations o ON o.id=i.organization_id
+                        WHERE i.token_hash=? AND i.email=? AND i.used_at IS NULL AND i.expires_at>?""",
+                        (token_hash, email, stamp(now())),
+                    ).fetchone()
+                    if not invite:
+                        raise inventory.InventoryError("This invitation is invalid or expired")
+                    organization_id = invite["organization_id"]
+                    company = invite["company"]
+                else:
+                    company = inventory.required(data, "company")
+                    organization_id = db.execute(
+                        "INSERT INTO organizations(name) VALUES (?)", (company,)
+                    ).lastrowid
+                cursor = db.execute(
+                    "INSERT INTO users(organization_id,name,email,password_hash,salt) VALUES (?,?,?,?,?)",
+                    (organization_id, name, email, password_digest(password, salt), salt),
+                )
+                if invite_token:
+                    db.execute(
+                        "UPDATE invitations SET used_at=? WHERE token_hash=?",
+                        (stamp(now()), token_hash),
+                    )
+                csrf, cookie = self.new_session(db, cursor.lastrowid)
             return self.json_response(
                 {
-                    "user": {"id": cursor.lastrowid, "name": name, "email": email},
+                    "user": {"id": cursor.lastrowid, "name": name, "email": email, "company": company},
                     "csrf": csrf,
                 },
                 HTTPStatus.CREATED,
@@ -235,7 +261,10 @@ class Handler(BaseHTTPRequestHandler):
             data = self.read_json()
             email = str(data.get("email", "")).strip().lower()
             password = str(data.get("password", ""))
-            user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            user = db.execute(
+                "SELECT u.*, o.name company FROM users u JOIN organizations o ON o.id=u.organization_id WHERE u.email=?",
+                (email,),
+            ).fetchone()
             if not user or not hmac.compare_digest(
                 password_digest(password, user["salt"]), user["password_hash"]
             ):
@@ -321,6 +350,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_response(
                 {"error": "Sign in to continue"}, HTTPStatus.UNAUTHORIZED
             )
+        db.organization_id = session["organization_id"]
         if method != "GET" and not hmac.compare_digest(
             self.headers.get("X-CSRF-Token", ""), session["csrf_token"]
         ):
@@ -338,26 +368,47 @@ class Handler(BaseHTTPRequestHandler):
             )
         if path == "/api/profile" and method == "PATCH":
             name = inventory.required(self.read_json(), "name")
-            db.execute("UPDATE users SET name=? WHERE id=?", (name, session["user_id"]))
+            db.execute("UPDATE users SET name=? WHERE id=? AND organization_id=?", (name, session["user_id"], db.organization_id))
             return self.json_response({"name": name})
+
+        if path == "/api/invitations" and method == "POST":
+            email = inventory.required(self.read_json(), "email").lower()
+            if "@" not in email:
+                raise inventory.InventoryError("Enter a valid email address")
+            if db.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+                raise inventory.InventoryError("That email already has an account")
+            token = secrets.token_urlsafe(32)
+            db.execute(
+                """INSERT INTO invitations(token_hash,organization_id,email,invited_by,expires_at)
+                VALUES (?,?,?,?,?)""",
+                (
+                    hashlib.sha256(token.encode()).hexdigest(),
+                    db.organization_id,
+                    email,
+                    session["user_id"],
+                    stamp(now() + timedelta(days=7)),
+                ),
+            )
+            return self.json_response({"token": token}, HTTPStatus.CREATED)
 
         if path == "/api/bootstrap" and method == "GET":
             return self.json_response(
                 {
                     "warehouses": [
                         dict(r)
-                        for r in db.execute("SELECT * FROM warehouses ORDER BY name")
+                        for r in db.execute("SELECT * FROM warehouses WHERE organization_id=? ORDER BY name", (db.organization_id,))
                     ],
                     "locations": [
                         dict(r)
                         for r in db.execute(
                             """SELECT l.*, w.name warehouse FROM locations l
-                    JOIN warehouses w ON w.id=l.warehouse_id ORDER BY w.name,l.name"""
+                            JOIN warehouses w ON w.id=l.warehouse_id WHERE l.organization_id=? ORDER BY w.name,l.name""",
+                            (db.organization_id,),
                         )
                     ],
                     "categories": [
                         dict(r)
-                        for r in db.execute("SELECT * FROM categories ORDER BY name")
+                        for r in db.execute("SELECT * FROM categories WHERE organization_id=? ORDER BY name", (db.organization_id,))
                     ],
                     "products": (
                         inventory.list_products(db)

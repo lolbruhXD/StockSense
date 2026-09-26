@@ -1,6 +1,6 @@
 # StockSense
 
-StockSense is a local inventory management app for a single business. It tracks products across warehouses and locations, turns receipts, deliveries, transfers, and physical counts into stock movements, and keeps a searchable ledger of every validated change.
+StockSense is an inventory management app with separate company workspaces. It tracks products across warehouses and locations, turns receipts, deliveries, transfers, and physical counts into stock movements, and keeps a searchable ledger of every validated change.
 
 The interface follows the supplied StockSense PDF and workflow sketch. The implementation uses Python's standard library, SQLite, and plain browser JavaScript. There is no build step or package installation.
 
@@ -13,6 +13,8 @@ python3 -m stocksense.server
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000), create an account, then add a warehouse and products. The database is created in `data/stocksense.sqlite3`. Set `STOCKSENSE_DB` to choose another path. The `data/` directory is ignored by Git.
+
+Each new signup creates a company workspace. To add a colleague to that workspace, open **My profile**, create an invitation for their email address, and share the generated link. Invitations expire after seven days and can only be used once by the named email address. Existing databases are migrated on startup; their current accounts and stock stay together in one workspace.
 
 ## How stock moves
 
@@ -44,4 +46,4 @@ For a local demo without email, set `STOCKSENSE_DEV_RESET_CODES=1`. The reset co
 
 ## Scope and deployment
 
-The default server listens only on `127.0.0.1`. All accounts in one database share the same company inventory. For public deployment, add HTTPS, managed account provisioning, abuse protection, backups, and tenant separation if multiple businesses will use one server. The included HTTP server is designed for local or private-network use, not as a public internet edge server.
+The default server listens only on `127.0.0.1`. Company IDs are checked on inventory reads and writes, and the database uses company-aware foreign keys. The included SQLite database and Python HTTP server are still for local demos and small private installations. They have not been load tested for hundreds of companies and thousands of users. A production deployment at that scale needs PostgreSQL, a multiworker application server, HTTPS, backups, monitoring, and load tests before launch.
