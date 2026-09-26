@@ -146,7 +146,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         try:
             origin = self.headers.get("Origin")
-            if origin and origin != f"http://{self.headers.get('Host')}":
+            if origin and origin not in (
+                f"http://{self.headers.get('Host')}",
+                f"https://{self.headers.get('Host')}",
+            ):
                 return self.json_response(
                     {"error": "Request origin not allowed"}, HTTPStatus.FORBIDDEN
                 )
