@@ -3,7 +3,6 @@ const toast = document.querySelector("#toast");
 const state = {
   user: null,
   csrf: "",
-  catalog: null,
   filters: null,
   authMode: "login",
   renderId: 0,
@@ -156,18 +155,6 @@ function locationOptions(selected = "", placeholder = "Select location") {
 function categoryOptions(selected = "", all = false) {
   return `${all ? '<option value="">All categories</option>' : '<option value="">No category</option>'}${(referenceData()?.categories || []).map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}`;
 }
-function productOptions(selected = "") {
-  return `<option value="">Select product</option>${(
-    state.catalog?.products || []
-  )
-    .filter((p) => p.active || String(selected) === String(p.id))
-    .map(
-      (p) =>
-        `<option value="${p.id}" ${String(selected) === String(p.id) ? "selected" : ""}>${escapeHtml(p.sku)} · ${escapeHtml(p.name)}</option>`,
-    )
-    .join("")}`;
-}
-
 function renderAuth() {
   state.renderId++;
   const mode = state.authMode;
@@ -181,33 +168,12 @@ function renderAuth() {
 }
 
 function referenceData() {
-  return state.catalog || state.filters;
+  return state.filters;
 }
 
-let catalogRequest;
 let filterRequest;
 let referenceVersion = 0;
-let catalogRequestVersion = -1;
 let filterRequestVersion = -1;
-function loadCatalog() {
-  if (state.catalog) return Promise.resolve(state.catalog);
-  if (!catalogRequest || catalogRequestVersion !== referenceVersion) {
-    const version = referenceVersion;
-    catalogRequestVersion = version;
-    catalogRequest = api("/bootstrap")
-      .then((catalog) => {
-        if (version === referenceVersion) {
-          state.catalog = catalog;
-          state.filters = catalog;
-        }
-        return catalog;
-      })
-      .finally(() => {
-        if (catalogRequestVersion === version) catalogRequest = null;
-      });
-  }
-  return catalogRequest;
-}
 function loadFilters() {
   if (referenceData()) return Promise.resolve(referenceData());
   if (!filterRequest || filterRequestVersion !== referenceVersion) {
@@ -224,9 +190,8 @@ function loadFilters() {
   }
   return filterRequest;
 }
-function clearCatalog() {
+function clearFilters() {
   referenceVersion++;
-  state.catalog = null;
   state.filters = null;
 }
 
@@ -263,8 +228,8 @@ function renderDashboard(data) {
 
 function renderProducts(rows) {
   const content = `${pageHead("Products", "Create your catalog and set reorder points for timely alerts.", `<div class="head-actions">${button("Add category", "category", "secondary")}${button(`${icon("plus", 17)} Add product`, "product")}</div>`)}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="product-search" placeholder="Search name or SKU" aria-label="Search products"></label><select id="product-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count">${countLabel(rows.length, "product")}</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Unit</th><th>On hand</th><th>Reorder at</th><th>Status</th><th></th></tr></thead><tbody id="product-rows">${productRows(rows)}</tbody></table></div>`;
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="product-search" placeholder="Search name or SKU" aria-label="Search products"></label><select id="product-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="product-count">Showing ${countLabel(rows.length, "product")}</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Unit</th><th>On hand</th><th>Reorder at</th><th>Status</th><th></th></tr></thead><tbody id="product-rows">${productRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="products-more" ${rows.length < pageSize ? "hidden" : ""}>Load more products</button>`;
   shell(content, "/products", "Products");
 }
 function productRows(rows) {
@@ -272,7 +237,7 @@ function productRows(rows) {
     ? rows
         .map(
           (p) =>
-            `<tr data-search="${escapeHtml((p.name + " " + p.sku).toLowerCase())}" data-category="${p.category_id || ""}"><td><strong>${escapeHtml(p.name)}</strong></td><td class="code">${escapeHtml(p.sku)}</td><td>${escapeHtml(p.category || "—")}</td><td>${escapeHtml(p.uom)}</td><td><strong>${formatQuantity(p.on_hand)}</strong></td><td>${formatQuantity(p.reorder_point)}</td><td>${p.low_stock ? '<span class="status-low">Low stock</span>' : '<span class="status-good">In stock</span>'}</td><td><button class="table-action" data-action="edit-product" data-id="${p.id}">Edit</button></td></tr>`,
+            `<tr data-id="${p.id}" data-name="${escapeHtml(p.name)}"><td><strong>${escapeHtml(p.name)}</strong></td><td class="code">${escapeHtml(p.sku)}</td><td>${escapeHtml(p.category || "—")}</td><td>${escapeHtml(p.uom)}</td><td><strong>${formatQuantity(p.on_hand)}</strong></td><td>${formatQuantity(p.reorder_point)}</td><td>${p.low_stock ? '<span class="status-low">Low stock</span>' : '<span class="status-good">In stock</span>'}</td><td><button class="table-action" data-action="edit-product" data-id="${p.id}">Edit</button></td></tr>`,
         )
         .join("")
     : `<tr><td colspan="8">${empty("Your catalog starts here", "Add your first product to begin tracking stock.", button("Add product", "product", "secondary"))}</td></tr>`;
@@ -280,7 +245,7 @@ function productRows(rows) {
 
 function renderStock(rows) {
   const content = `${pageHead("Stock overview", "See on-hand quantities at each location and reconcile physical counts.", `<a class="btn primary" href="#/new/adjustment">${icon("plus", 17)} Stock adjustment</a>`)}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="stock-search" placeholder="Search name or SKU" aria-label="Search stock"></label><select id="stock-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="stock-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="stock-count">Showing ${rows.length} locations</span></div>
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="stock-search" placeholder="Search name or SKU" aria-label="Search stock"></label><select id="stock-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="stock-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="stock-count">Showing ${countLabel(rows.length, "location")}</span></div>
     <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Warehouse</th><th>Location</th><th>Unit cost</th><th>On hand</th><th>Unit</th></tr></thead><tbody id="stock-rows">${stockRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="stock-more" ${rows.length < pageSize ? "hidden" : ""}>Load more stock</button><p class="table-note">Stock totals change only when an operation is validated. Use an adjustment to record a physical count.</p>`;
   shell(content, "/stock", "Stock overview");
 }
@@ -327,7 +292,7 @@ function movementEndpoint(o, side) {
 function renderOperations(kind, rows) {
   const newKind = kind === "all" ? "receipt" : kind;
   const content = `${pageHead(operationTitle(kind), operationDescription(kind), `<a class="btn primary" href="#/new/${newKind}">${icon("plus", 17)} New ${newKind}</a>`)}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="operation-search" placeholder="Search reference or contact" aria-label="Search operations"></label>${kind === "all" ? `<select id="operation-type" aria-label="Filter by document type"><option value="">All types</option>${["receipt", "delivery", "transfer", "adjustment"].map((t) => `<option value="${t}">${titleCase(t)}</option>`).join("")}</select>` : ""}<select id="operation-status" aria-label="Filter by status"><option value="">All statuses</option>${["draft", "waiting", "ready", "done", "canceled"].map((s) => `<option value="${s}">${titleCase(s)}</option>`).join("")}</select><select id="operation-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="operation-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="operation-count">Showing ${rows.length} records</span></div>
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="operation-search" placeholder="Search reference or contact" aria-label="Search operations"></label>${kind === "all" ? `<select id="operation-type" aria-label="Filter by document type"><option value="">All types</option>${["receipt", "delivery", "transfer", "adjustment"].map((t) => `<option value="${t}">${titleCase(t)}</option>`).join("")}</select>` : ""}<select id="operation-status" aria-label="Filter by status"><option value="">All statuses</option>${["draft", "waiting", "ready", "done", "canceled"].map((s) => `<option value="${s}">${titleCase(s)}</option>`).join("")}</select><select id="operation-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="operation-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="operation-count">Showing ${countLabel(rows.length, "record")}</span></div>
     <div class="table-wrap"><table><thead><tr><th>Reference</th><th>Type</th><th>From</th><th>To</th><th>Contact</th><th>Scheduled</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody id="operation-rows">${operationRows(rows, kind)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="operations-more" ${rows.length < pageSize ? "hidden" : ""}>Load more operations</button>`;
   shell(content, `/operations/${kind}`, operationTitle(kind));
 }
@@ -342,8 +307,11 @@ function operationRows(rows, kind) {
     : `<tr><td colspan="9">${empty(`No ${operationTitle(kind).toLowerCase()} yet`, `Create a ${kind === "all" ? "receipt" : kind} to get started.`, `<a class="btn secondary" href="#/new/${kind === "all" ? "receipt" : kind}">New ${kind === "all" ? "receipt" : kind}</a>`)}</td></tr>`;
 }
 
-function lineRow(productId = "", quantity = "") {
-  return `<div class="line-row"><label>Product<select name="product_id" required>${productOptions(productId)}</select></label><label>Quantity<input name="quantity" type="number" min="0" step="0.001" required value="${escapeHtml(quantity)}" placeholder="0.000"></label><button type="button" class="remove-line" data-action="remove-line" aria-label="Remove product">${icon("close", 18)}</button></div>`;
+function lineRow(line = {}) {
+  const selected = line.product_id
+    ? `<option value="${line.product_id}" selected>${escapeHtml(line.sku)} · ${escapeHtml(line.product)}</option>`
+    : "";
+  return `<div class="line-row"><label>Product<input class="product-find" type="search" placeholder="Find by SKU or name" aria-label="Find product"><select name="product_id" required><option value="">Select product</option>${selected}</select></label><label>Quantity<input name="quantity" type="number" min="0" step="0.001" required value="${escapeHtml(line.quantity ?? "")}" placeholder="0.000"></label><button type="button" class="remove-line" data-action="remove-line" aria-label="Remove product">${icon("close", 18)}</button></div>`;
 }
 function operationForm(kind, operation = null) {
   const editing = Boolean(operation);
@@ -358,7 +326,7 @@ function operationForm(kind, operation = null) {
       ${kind === "delivery" || kind === "transfer" || kind === "adjustment" ? `<label class="field">${kind === "adjustment" ? "Counted location" : "Source location"}<select name="from_location_id" required>${locationOptions(operation?.from_location_id)}</select></label>` : ""}
       <label class="field">Scheduled date<input name="scheduled_date" type="date" value="${escapeHtml(operation?.scheduled_date || "")}"></label>
       <label class="field full">Notes<textarea name="note" rows="3" placeholder="Add context for your team">${escapeHtml(operation?.note || "")}</textarea></label>
-    </div></section><section class="form-panel"><div class="panel-title"><span class="step-number">02</span><div><h2>Products</h2><p>${kind === "adjustment" ? "Enter the new physical count for each product." : "Add the products and quantities in this movement."}</p></div></div><div id="line-rows" class="line-rows">${(operation?.lines?.length ? operation.lines : [{}]).map((line) => lineRow(line.product_id, line.quantity ?? "")).join("")}</div><button class="add-line" data-action="add-line" type="button">${icon("plus", 16)} Add another product</button></section></div>
+    </div></section><section class="form-panel"><div class="panel-title"><span class="step-number">02</span><div><h2>Products</h2><p>${kind === "adjustment" ? "Enter the new physical count for each product." : "Add the products and quantities in this movement."}</p></div></div><div id="line-rows" class="line-rows">${(operation?.lines?.length ? operation.lines : [{}]).map(lineRow).join("")}</div><button class="add-line" data-action="add-line" type="button">${icon("plus", 16)} Add another product</button></section></div>
     <aside class="editor-side"><div class="summary-card"><h3>Before you save</h3><p>${kind === "receipt" ? "Received stock will be added to the destination when you validate." : kind === "delivery" ? "Pick and pack before marking ready. Validation removes stock from the source." : kind === "transfer" ? "Validation removes stock from the source and adds it to the destination in one step." : "Validation replaces the recorded quantity with your physical count."}</p><div class="summary-rule"></div><span>All completed changes appear in Move history.</span></div><button type="submit" class="btn primary save-btn">${editing ? "Save changes" : "Save draft"} ${icon("chevron", 17)}</button></aside></form>`;
   shell(
     content,
@@ -421,7 +389,7 @@ function renderOperationDetail(o) {
 
 function renderHistory(rows) {
   const content = `${pageHead("Move history", "A permanent record of validated stock changes across every location.")}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="history-search" placeholder="Search reference or SKU" aria-label="Search history"></label><select id="history-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="history-product" aria-label="Filter by product"><option value="">All products</option>${productOptions("").replace('<option value="">Select product</option>', "")}</select><span class="toolbar-count" id="history-count">Showing ${rows.length} movements</span></div>
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="history-search" placeholder="Search reference or SKU" aria-label="Search history"></label><select id="history-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><label class="search-field">${icon("search", 18)}<input id="history-product-search" type="search" placeholder="Find product" aria-label="Find product filter"></label><select id="history-product" aria-label="Filter by product"><option value="">All products</option></select><span class="toolbar-count" id="history-count">Showing ${countLabel(rows.length, "movement")}</span></div>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Product</th><th>Warehouse</th><th>Location</th><th>Change</th><th>Balance</th></tr></thead><tbody id="history-rows">${historyRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="history-more" ${rows.length < pageSize ? "hidden" : ""}>Load more movements</button><p class="table-note">Transfers appear twice: stock leaves one location and enters another. Their total change is zero.</p>`;
   shell(content, "/history", "Move history");
 }
@@ -478,6 +446,7 @@ async function render() {
   const route = location.hash.slice(1) || "/dashboard";
   const id = ++state.renderId;
   clearTimeout(changed.timer);
+  productFilterController?.abort();
   stockFilterController?.abort();
   operationFilterController?.abort();
   historyFilterController?.abort();
@@ -489,8 +458,8 @@ async function render() {
       return;
     }
     if (route === "/products") {
-      const catalog = await loadCatalog();
-      if (current()) renderProducts(catalog.products);
+      const [products] = await Promise.all([api("/products"), loadFilters()]);
+      if (current()) renderProducts(products);
       return;
     }
     if (route === "/stock") {
@@ -499,7 +468,7 @@ async function render() {
       return;
     }
     if (route === "/history") {
-      const [rows] = await Promise.all([api("/history"), loadCatalog()]);
+      const [rows] = await Promise.all([api("/history"), loadFilters()]);
       if (current()) renderHistory(rows);
       return;
     }
@@ -528,7 +497,7 @@ async function render() {
       parts[0] === "new" &&
       ["receipt", "delivery", "transfer", "adjustment"].includes(parts[1])
     ) {
-      await loadCatalog();
+      await loadFilters();
       if (current()) operationForm(parts[1]);
       return;
     }
@@ -540,7 +509,7 @@ async function render() {
     if (parts[0] === "edit" && /^\d+$/.test(parts[1])) {
       const [operation] = await Promise.all([
         api(`/operations/${parts[1]}`),
-        loadCatalog(),
+        loadFilters(),
       ]);
       if (current()) operationForm(operation.type, operation);
       return;
@@ -556,10 +525,8 @@ function openModal(title, body, formId) {
   dialog.innerHTML = `<div class="modal-head"><h2>${title}</h2><button class="icon-button" type="button" data-action="close-modal" aria-label="Close">${icon("close", 19)}</button></div><form id="${formId}" class="modal-form">${body}<div class="modal-foot"><button type="button" class="btn secondary" data-action="close-modal">Cancel</button><button type="submit" class="btn primary">Save</button></div></form>`;
   dialog.showModal();
 }
-function productModal(id = null) {
-  const p = id
-    ? state.catalog.products.find((product) => product.id === Number(id))
-    : null;
+async function productModal(id = null) {
+  const p = id ? await api(`/products/${id}`) : null;
   openModal(
     p ? "Edit product" : "Add product",
     `<input type="hidden" name="id" value="${p?.id || ""}"><div class="modal-fields"><label class="field">Product name<input name="name" required value="${escapeHtml(p?.name || "")}" placeholder="e.g. Steel rods"></label><label class="field">SKU / code<input name="sku" required value="${escapeHtml(p?.sku || "")}" placeholder="e.g. STEEL-001"></label><label class="field">Category<select name="category_id">${categoryOptions(p?.category_id)}</select></label><label class="field">Unit of measure<input name="uom" required value="${escapeHtml(p?.uom || "")}" placeholder="e.g. pcs, kg, boxes"></label><label class="field">Unit cost<input name="unit_cost" type="number" min="0" step="0.01" value="${p?.unit_cost ?? 0}"></label><label class="field">Reorder point<input name="reorder_point" type="number" min="0" step="0.001" value="${p?.reorder_point ?? 0}"></label>${p ? `<label class="check-field"><input type="checkbox" name="active" ${p.active ? "checked" : ""}> Active product</label>` : `<div class="modal-divider">OPTIONAL OPENING STOCK</div><label class="field">Initial quantity<input name="initial_stock" type="number" min="0" step="0.001" value="0"></label><label class="field">Initial location<select name="initial_location_id">${locationOptions()}</select></label>`}</div>`,
@@ -657,7 +624,7 @@ async function submitForm(event) {
       }
       state.user = result.user;
       state.csrf = result.csrf;
-      clearCatalog();
+      clearFilters();
       if (location.hash === "#/dashboard") await render();
       else location.hash = "/dashboard";
       return;
@@ -710,7 +677,7 @@ async function submitForm(event) {
         method: id ? "PUT" : "POST",
         body: JSON.stringify(values),
       });
-      clearCatalog();
+      clearFilters();
       showNotice(id ? "Operation updated" : "Draft saved");
       location.hash = "/operation/" + (id || result.id);
       return;
@@ -723,7 +690,7 @@ async function submitForm(event) {
       showNotice("Profile updated");
     }
     document.querySelector("#dialog")?.close();
-    if (formId !== "profile-form") clearCatalog();
+    if (formId !== "profile-form") clearFilters();
     await render();
   } catch (error) {
     showNotice(error.message, true);
@@ -750,8 +717,8 @@ async function clickAction(event) {
   }
   if (action === "close-modal")
     return document.querySelector("#dialog")?.close();
-  if (action === "product") return productModal();
-  if (action === "edit-product") return productModal(target.dataset.id);
+  if (action === "product") return productModal().catch((error) => showNotice(error.message, true));
+  if (action === "edit-product") return productModal(target.dataset.id).catch((error) => showNotice(error.message, true));
   if (
     [
       "category",
@@ -772,6 +739,25 @@ async function clickAction(event) {
     return;
   }
   if (action === "print") return window.print();
+  if (action === "products-more") {
+    target.disabled = true;
+    try {
+      const count = document.querySelectorAll("#product-rows tr").length;
+      const last = document.querySelector("#product-rows tr:last-child")?.dataset;
+      const query = productQuery(last?.name, last?.id);
+      const rows = await api("/products" + query);
+      if (!target.isConnected || query !== productQuery(last?.name, last?.id)) return;
+      if (rows.length)
+        document.querySelector("#product-rows").insertAdjacentHTML("beforeend", productRows(rows));
+      document.querySelector("#product-count").textContent = `Showing ${countLabel(count + rows.length, "product")}`;
+      target.hidden = rows.length < pageSize;
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      target.disabled = false;
+    }
+    return;
+  }
   if (action === "stock-more") {
     target.disabled = true;
     try {
@@ -784,7 +770,7 @@ async function clickAction(event) {
           .querySelector("#stock-rows")
           .insertAdjacentHTML("beforeend", stockRows(rows));
       document.querySelector("#stock-count").textContent =
-        `Showing ${count + rows.length} locations`;
+        `Showing ${countLabel(count + rows.length, "location")}`;
       target.hidden = rows.length < pageSize;
     } catch (error) {
       showNotice(error.message, true);
@@ -806,7 +792,7 @@ async function clickAction(event) {
           .querySelector("#operation-rows")
           .insertAdjacentHTML("beforeend", operationRows(rows, "all"));
       document.querySelector("#operation-count").textContent =
-        `Showing ${count + rows.length} records`;
+        `Showing ${countLabel(count + rows.length, "record")}`;
       target.hidden = rows.length < pageSize;
     } catch (error) {
       showNotice(error.message, true);
@@ -827,7 +813,7 @@ async function clickAction(event) {
         .querySelector("#history-rows")
         .insertAdjacentHTML("beforeend", rows.map(historyRow).join(""));
       document.querySelector("#history-count").textContent =
-        `Showing ${count + rows.length} movements`;
+        `Showing ${countLabel(count + rows.length, "movement")}`;
       target.hidden = rows.length < pageSize;
     } catch (error) {
       showNotice(error.message, true);
@@ -841,7 +827,7 @@ async function clickAction(event) {
       await api("/logout", { method: "POST", body: "{}" });
       state.user = null;
       state.csrf = "";
-      clearCatalog();
+      clearFilters();
       renderAuth();
       return;
     }
@@ -865,7 +851,7 @@ async function clickAction(event) {
       const id = action.split(":")[1];
       await api(`/operations/${id}/validate`, { method: "POST", body: "{}" });
       showNotice("Stock updated and movement logged");
-      clearCatalog();
+      clearFilters();
       return await render();
     }
   } catch (error) {
@@ -873,23 +859,33 @@ async function clickAction(event) {
   }
 }
 
-function filterRows(inputId, rowId, fields) {
-  const search =
-    document.querySelector(`#${inputId}`)?.value.trim().toLowerCase() || "";
-  const selected = fields.map(([control, field]) => [
-    document.querySelector(`#${control}`)?.value || "",
-    field,
-  ]);
-  const rows = document.querySelectorAll(`#${rowId} tr`);
-  for (const row of rows) {
-    const matchingText = (
-      row.dataset.search || row.textContent.toLowerCase()
-    ).includes(search);
-    const matchingFields = selected.every(
-      ([value, field]) => !value || row.dataset[field] === value,
-    );
-    row.hidden = !(matchingText && matchingFields);
+function productQuery(afterName = "", afterId = 0) {
+  return queryString({
+    search: document.querySelector("#product-search")?.value,
+    category_id: document.querySelector("#product-category")?.value,
+    after_name: afterName,
+    after_id: afterId,
+  });
+}
+let productFilterController;
+async function filterProducts() {
+  productFilterController?.abort();
+  const controller = new AbortController();
+  productFilterController = controller;
+  let rows;
+  try {
+    rows = await api("/products" + productQuery(), { signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    throw error;
   }
+  if (controller.signal.aborted) return;
+  const tbody = document.querySelector("#product-rows");
+  if (tbody) tbody.innerHTML = productRows(rows);
+  const count = document.querySelector("#product-count");
+  if (count) count.textContent = `Showing ${countLabel(rows.length, "product")}`;
+  const more = document.querySelector('[data-action="products-more"]');
+  if (more) more.hidden = rows.length < pageSize;
 }
 
 function stockQuery(offset) {
@@ -918,7 +914,7 @@ async function filterStock() {
   const tbody = document.querySelector("#stock-rows");
   if (tbody) tbody.innerHTML = stockRows(rows);
   const count = document.querySelector("#stock-count");
-  if (count) count.textContent = `Showing ${rows.length} locations`;
+  if (count) count.textContent = `Showing ${countLabel(rows.length, "location")}`;
   const more = document.querySelector('[data-action="stock-more"]');
   if (more) more.hidden = rows.length < pageSize;
 }
@@ -954,7 +950,7 @@ async function filterOperations() {
   const tbody = document.querySelector("#operation-rows");
   if (tbody) tbody.innerHTML = operationRows(rows, kind);
   const count = document.querySelector("#operation-count");
-  if (count) count.textContent = `Showing ${rows.length} records`;
+  if (count) count.textContent = `Showing ${countLabel(rows.length, "record")}`;
   const more = document.querySelector('[data-action="operations-more"]');
   if (more) more.hidden = rows.length < pageSize;
 }
@@ -976,7 +972,7 @@ async function filterHistory() {
   const tbody = document.querySelector("#history-rows");
   if (tbody) tbody.innerHTML = historyRows(rows);
   const count = document.querySelector("#history-count");
-  if (count) count.textContent = `Showing ${rows.length} movements`;
+  if (count) count.textContent = `Showing ${countLabel(rows.length, "movement")}`;
   const more = document.querySelector('[data-action="history-more"]');
   if (more) more.hidden = rows.length < pageSize;
 }
@@ -988,21 +984,66 @@ function historyQuery(beforeId = 0) {
     product_id: document.querySelector("#history-product")?.value,
   });
 }
+let productChoiceTimer;
+let productChoiceController;
+function queueProductChoices(input, delay = 150) {
+  clearTimeout(productChoiceTimer);
+  productChoiceController?.abort();
+  productChoiceTimer = setTimeout(async () => {
+    const controller = new AbortController();
+    productChoiceController = controller;
+    const search = input.value;
+    const select = input.id === "history-product-search"
+      ? document.querySelector("#history-product")
+      : input.closest(".line-row")?.querySelector("[name=product_id]");
+    if (!select) return;
+    const selected = select.value;
+    const selectedLabel = select.selectedOptions[0]?.textContent;
+    try {
+      const products = await api("/product-choices" + queryString({ search }), {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || !input.isConnected || input.value !== search) return;
+      const label = input.id === "history-product-search" ? "All products" : "Select product";
+      const keep = selected && !products.some((product) => String(product.id) === selected)
+        ? `<option value="${selected}">${escapeHtml(selectedLabel)}</option>`
+        : "";
+      select.innerHTML = `<option value="">${label}</option>${keep}${products.map((product) => `<option value="${product.id}">${escapeHtml(product.sku)} · ${escapeHtml(product.name)}</option>`).join("")}`;
+      select.value = selected;
+    } catch (error) {
+      if (error.name !== "AbortError") showNotice(error.message, true);
+    }
+  }, delay);
+}
 function changed(event) {
+  if (event.target.matches(".product-find, #history-product-search")) {
+    if (event.type !== "input") return;
+    if (event.target.id === "history-product-search") {
+      const selected = document.querySelector("#history-product");
+      if (selected?.value) {
+        selected.value = "";
+        filterHistory().catch((error) => showNotice(error.message, true));
+      }
+    } else {
+      const selected = event.target.closest(".line-row")?.querySelector("[name=product_id]");
+      if (selected) selected.value = "";
+    }
+    queueProductChoices(event.target);
+    return;
+  }
   if (event.target.closest(".toolbar")) {
     if (event.type === "input" && event.target.tagName !== "INPUT") return;
     if (event.type === "change" && event.target.tagName === "INPUT") return;
-    if (event.target.id.startsWith("product-"))
-      filterRows("product-search", "product-rows", [
-        ["product-category", "category"],
-      ]);
     if (
+      event.target.id.startsWith("product-") ||
       event.target.id.startsWith("stock-") ||
       event.target.id.startsWith("operation-") ||
       event.target.id.startsWith("history-")
     ) {
       clearTimeout(changed.timer);
-      const task = event.target.id.startsWith("stock-")
+      const task = event.target.id.startsWith("product-")
+        ? filterProducts
+        : event.target.id.startsWith("stock-")
         ? filterStock
         : event.target.id.startsWith("operation-")
           ? filterOperations
@@ -1018,6 +1059,10 @@ document.addEventListener("submit", submitForm);
 document.addEventListener("click", clickAction);
 document.addEventListener("input", changed);
 document.addEventListener("change", changed);
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches(".product-find, #history-product-search"))
+    queueProductChoices(event.target, 0);
+});
 window.addEventListener("hashchange", render);
 
 (async () => {

@@ -148,27 +148,57 @@ def update_product(db, product_id, data):
         )
 
 
-def list_products(db, search="", category_id=None):
-    query = """SELECT p.*, c.name category,
-        COALESCE(SUM(s.quantity_milli), 0) on_hand_milli
-        FROM products p LEFT JOIN categories c ON c.id=p.category_id
-        LEFT JOIN stock_levels s ON s.product_id=p.id
-        WHERE p.organization_id=? AND (p.sku LIKE ? OR p.name LIKE ?)"""
+PRODUCT_SELECT = """SELECT p.*, c.name category,
+    COALESCE((SELECT SUM(s.quantity_milli) FROM stock_levels s
+        WHERE s.organization_id=p.organization_id AND s.product_id=p.id),0) on_hand_milli
+    FROM products p LEFT JOIN categories c ON c.id=p.category_id"""
+
+
+def product_row(row):
+    item = dict(row)
+    item["on_hand"] = quantity(item.pop("on_hand_milli"))
+    item["reorder_point"] = quantity(item.pop("reorder_milli"))
+    item["unit_cost"] = item.pop("unit_cost_cents") / 100
+    item["low_stock"] = item["on_hand"] <= item["reorder_point"]
+    return item
+
+
+def list_products(db, search="", category_id=None, limit=100, after_name="", after_id=0):
+    query = PRODUCT_SELECT + " WHERE p.organization_id=? AND (p.sku LIKE ? OR p.name LIKE ?)"
     term = f"%{search.strip()}%"
     params = [db.organization_id, term, term]
     if category_id:
         query += " AND p.category_id=?"
         params.append(category_id)
-    query += " GROUP BY p.id ORDER BY p.name"
-    result = []
-    for row in db.execute(query, params):
-        item = dict(row)
-        item["on_hand"] = quantity(item.pop("on_hand_milli"))
-        item["reorder_point"] = quantity(item.pop("reorder_milli"))
-        item["unit_cost"] = item.pop("unit_cost_cents") / 100
-        item["low_stock"] = item["on_hand"] <= item["reorder_point"]
-        result.append(item)
-    return result
+    if after_id:
+        query += " AND (p.name>? OR (p.name=? AND p.id>?))"
+        params.extend((after_name, after_name, after_id))
+    query += " ORDER BY p.name,p.id LIMIT ?"
+    params.append(limit)
+    return [product_row(row) for row in db.execute(query, params)]
+
+
+def product_detail(db, product_id):
+    row = db.execute(
+        PRODUCT_SELECT + " WHERE p.organization_id=? AND p.id=?",
+        (db.organization_id, product_id),
+    ).fetchone()
+    if not row:
+        raise InventoryError("Product not found")
+    return product_row(row)
+
+
+def product_choices(db, search="", limit=30):
+    term = f"%{search.strip()}%"
+    return [
+        dict(row)
+        for row in db.execute(
+            """SELECT id,sku,name,uom FROM products
+            WHERE organization_id=? AND active=1 AND (sku LIKE ? OR name LIKE ?)
+            ORDER BY name,id LIMIT ?""",
+            (db.organization_id, term, term, limit),
+        )
+    ]
 
 
 def stock(db, search="", warehouse_id=None, category_id=None, limit=100, offset=0):

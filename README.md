@@ -27,7 +27,7 @@ Draft and waiting operations can be edited. Canceled operations never change sto
 
 The **All operations** view filters by document type, status, warehouse, and category. Stock and products have SKU/name search; the move ledger has reference/SKU search and warehouse/product filters.
 
-Stock locations, operations, and move history load 100 rows at a time; use **Load more** to browse older records. Operations and move history use cursor paging. The stock view shows locations with a recorded balance, including balances adjusted to zero. Products without any stock movement remain in the product catalog.
+Products, stock locations, operations, and move history load 100 rows at a time; use **Load more** to browse older records. Products, operations, and move history use cursor paging. Product pickers search the catalog as you type. The stock view shows locations with a recorded balance, including balances adjusted to zero. Products without any stock movement remain in the product catalog.
 
 ## Password reset
 

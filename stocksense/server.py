@@ -412,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                     ],
                     "products": (
                         inventory.list_products(db)
-                        if self.param(query, "products") != "0"
+                        if self.param(query, "products") == "1"
                         else []
                     ),
                 }
@@ -422,13 +422,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/products" and method == "GET":
             return self.json_response(
                 inventory.list_products(
-                    db, self.param(query, "search"), self.param(query, "category_id")
+                    db,
+                    self.param(query, "search"),
+                    self.param(query, "category_id"),
+                    min(max(int(self.param(query, "limit") or 100), 1), 200),
+                    self.param(query, "after_name"),
+                    max(int(self.param(query, "after_id") or 0), 0),
                 )
+            )
+        if path == "/api/product-choices" and method == "GET":
+            return self.json_response(
+                inventory.product_choices(db, self.param(query, "search"))
             )
         if path == "/api/products" and method == "POST":
             return self.json_response(
                 {"id": inventory.create_product(db, self.read_json())},
                 HTTPStatus.CREATED,
+            )
+        if path.startswith("/api/products/") and method == "GET":
+            return self.json_response(
+                inventory.product_detail(db, int(path.rsplit("/", 1)[1]))
             )
         if path.startswith("/api/products/") and method == "PUT":
             inventory.update_product(db, int(path.rsplit("/", 1)[1]), self.read_json())
