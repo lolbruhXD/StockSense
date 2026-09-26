@@ -1,2 +1,1 @@
 """StockSense inventory application."""
-

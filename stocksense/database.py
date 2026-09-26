@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-
 DB_PATH = Path(os.environ.get("STOCKSENSE_DB", "data/stocksense.sqlite3"))
 
 
@@ -142,7 +141,11 @@ def milli(value, *, allow_zero=False):
     if not scaled.is_finite() or scaled != scaled.to_integral_value():
         raise ValueError("Quantities support up to three decimal places")
     if scaled < 0 or (scaled == 0 and not allow_zero):
-        raise ValueError("Quantity must be positive" if not allow_zero else "Quantity cannot be negative")
+        raise ValueError(
+            "Quantity must be positive"
+            if not allow_zero
+            else "Quantity cannot be negative"
+        )
     if scaled > 9_000_000_000_000:
         raise ValueError("Quantity is too large")
     return int(scaled)
@@ -157,6 +160,13 @@ def money_cents(value):
         scaled = Decimal(str(value)) * 100
     except (InvalidOperation, ValueError):
         raise ValueError("Enter a valid unit cost") from None
-    if not scaled.is_finite() or scaled != scaled.to_integral_value() or scaled < 0 or scaled > 9_000_000_000_000:
-        raise ValueError("Unit cost must be a nonnegative amount with two decimal places")
+    if (
+        not scaled.is_finite()
+        or scaled != scaled.to_integral_value()
+        or scaled < 0
+        or scaled > 9_000_000_000_000
+    ):
+        raise ValueError(
+            "Unit cost must be a nonnegative amount with two decimal places"
+        )
     return int(scaled)
