@@ -166,15 +166,15 @@ def list_products(db, search="", category_id=None):
     return result
 
 
-def stock(db, search="", warehouse_id=None, category_id=None):
-    query = """SELECT p.id product_id, p.sku, p.name product, p.uom, p.unit_cost_cents,
+def stock(db, search="", warehouse_id=None, category_id=None, limit=100, offset=0):
+    query = """SELECT p.id product_id, p.sku, p.name product, p.uom, p.category_id, p.unit_cost_cents,
         p.reorder_milli, c.name category, w.id warehouse_id, w.name warehouse,
         l.id location_id, l.name location, l.code location_code,
-        COALESCE(s.quantity_milli, 0) quantity_milli
-        FROM products p CROSS JOIN locations l
+        s.quantity_milli
+        FROM stock_levels s JOIN products p ON p.id=s.product_id
+        JOIN locations l ON l.id=s.location_id
         JOIN warehouses w ON w.id=l.warehouse_id
         LEFT JOIN categories c ON c.id=p.category_id
-        LEFT JOIN stock_levels s ON s.product_id=p.id AND s.location_id=l.id
         WHERE p.active=1 AND (p.sku LIKE ? OR p.name LIKE ?)"""
     params = [f"%{search.strip()}%"] * 2
     if warehouse_id:
@@ -183,7 +183,8 @@ def stock(db, search="", warehouse_id=None, category_id=None):
     if category_id:
         query += " AND p.category_id=?"
         params.append(category_id)
-    query += " ORDER BY p.name, w.name, l.name"
+    query += " ORDER BY p.name, p.id, w.name, l.name, l.id LIMIT ? OFFSET ?"
+    params.extend((limit, offset))
     items = []
     for row in db.execute(query, params):
         item = dict(row)
@@ -430,27 +431,30 @@ def set_status(db, operation_id, action):
 
 
 def _apply(db, operation_id, product_id, location_id, delta):
-    row = db.execute(
-        "SELECT quantity_milli FROM stock_levels WHERE product_id=? AND location_id=?",
-        (product_id, location_id),
-    ).fetchone()
-    current = row[0] if row else 0
-    balance = current + delta
-    if balance < 0:
+    if delta >= 0:
+        row = db.execute(
+            """INSERT INTO stock_levels(product_id,location_id,quantity_milli)
+            VALUES (?,?,?) ON CONFLICT(product_id,location_id)
+            DO UPDATE SET quantity_milli=stock_levels.quantity_milli+excluded.quantity_milli
+            RETURNING quantity_milli""",
+            (product_id, location_id, delta),
+        ).fetchone()
+    else:
+        row = db.execute(
+            """UPDATE stock_levels SET quantity_milli=quantity_milli+?
+            WHERE product_id=? AND location_id=? AND quantity_milli>=?
+            RETURNING quantity_milli""",
+            (delta, product_id, location_id, -delta),
+        ).fetchone()
+    if not row:
         product = db.execute(
             "SELECT sku FROM products WHERE id=?", (product_id,)
         ).fetchone()[0]
         raise InventoryError(f"Not enough {product} at the selected location")
     db.execute(
-        """INSERT INTO stock_levels(product_id,location_id,quantity_milli)
-        VALUES (?,?,?) ON CONFLICT(product_id,location_id)
-        DO UPDATE SET quantity_milli=excluded.quantity_milli""",
-        (product_id, location_id, balance),
-    )
-    db.execute(
         """INSERT INTO movements(operation_id,product_id,location_id,delta_milli,balance_milli)
         VALUES (?,?,?,?,?)""",
-        (operation_id, product_id, location_id, delta, balance),
+        (operation_id, product_id, location_id, delta, row["quantity_milli"]),
     )
 
 
@@ -517,7 +521,25 @@ def history(db, search="", warehouse_id=None, product_id=None, limit=100, offset
 
 
 def dashboard(db):
-    products = list_products(db)
+    totals = "SELECT product_id, SUM(quantity_milli) on_hand_milli FROM stock_levels GROUP BY product_id"
+    product_counts = db.execute(
+        f"""SELECT
+            COALESCE(SUM(CASE WHEN COALESCE(s.on_hand_milli,0)>0 THEN 1 ELSE 0 END),0) products_in_stock,
+            COALESCE(SUM(CASE WHEN p.active=1 AND COALESCE(s.on_hand_milli,0)<=p.reorder_milli THEN 1 ELSE 0 END),0) low_stock
+            FROM products p LEFT JOIN ({totals}) s ON s.product_id=p.id"""
+    ).fetchone()
+    low_stock_products = []
+    for row in db.execute(
+        f"""SELECT p.name,p.sku,p.uom,c.name category,
+            COALESCE(s.on_hand_milli,0) on_hand_milli
+            FROM products p LEFT JOIN ({totals}) s ON s.product_id=p.id
+            LEFT JOIN categories c ON c.id=p.category_id
+            WHERE p.active=1 AND COALESCE(s.on_hand_milli,0)<=p.reorder_milli
+            ORDER BY p.name LIMIT 6"""
+    ):
+        item = dict(row)
+        item["on_hand"] = quantity(item.pop("on_hand_milli"))
+        low_stock_products.append(item)
     counts = {
         row["type"]: row["n"]
         for row in db.execute(
@@ -526,17 +548,13 @@ def dashboard(db):
     }
     recent = list_operations(db, limit=8)
     return {
-        "products_in_stock": sum(product["on_hand"] > 0 for product in products),
-        "low_stock": sum(
-            product["low_stock"] for product in products if product["active"]
-        ),
+        "products_in_stock": product_counts["products_in_stock"],
+        "low_stock": product_counts["low_stock"],
         "pending_receipts": counts.get("receipt", 0),
         "pending_deliveries": counts.get("delivery", 0),
         "scheduled_transfers": counts.get("transfer", 0),
         "recent_operations": recent,
-        "low_stock_products": [p for p in products if p["active"] and p["low_stock"]][
-            :6
-        ],
+        "low_stock_products": low_stock_products,
     }
 
 

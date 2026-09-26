@@ -4,6 +4,7 @@ const state = {
   user: null,
   csrf: "",
   catalog: null,
+  filters: null,
   authMode: "login",
   renderId: 0,
   devResetCode: "",
@@ -145,13 +146,13 @@ function empty(title, copy, action = "") {
   return `<div class="empty"><div class="empty-symbol">${icon("box", 30)}</div><h3>${title}</h3><p>${copy}</p>${action}</div>`;
 }
 function warehouseOptions(selected = "", all = false) {
-  return `${all ? '<option value="">All warehouses</option>' : '<option value="">Select warehouse</option>'}${(state.catalog?.warehouses || []).map((w) => `<option value="${w.id}" ${String(selected) === String(w.id) ? "selected" : ""}>${escapeHtml(w.name)}</option>`).join("")}`;
+  return `${all ? '<option value="">All warehouses</option>' : '<option value="">Select warehouse</option>'}${(referenceData()?.warehouses || []).map((w) => `<option value="${w.id}" ${String(selected) === String(w.id) ? "selected" : ""}>${escapeHtml(w.name)}</option>`).join("")}`;
 }
 function locationOptions(selected = "", placeholder = "Select location") {
-  return `<option value="">${placeholder}</option>${(state.catalog?.locations || []).map((l) => `<option value="${l.id}" ${String(selected) === String(l.id) ? "selected" : ""}>${escapeHtml(l.warehouse)} / ${escapeHtml(l.name)}</option>`).join("")}`;
+  return `<option value="">${placeholder}</option>${(referenceData()?.locations || []).map((l) => `<option value="${l.id}" ${String(selected) === String(l.id) ? "selected" : ""}>${escapeHtml(l.warehouse)} / ${escapeHtml(l.name)}</option>`).join("")}`;
 }
 function categoryOptions(selected = "", all = false) {
-  return `${all ? '<option value="">All categories</option>' : '<option value="">No category</option>'}${(state.catalog?.categories || []).map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}`;
+  return `${all ? '<option value="">All categories</option>' : '<option value="">No category</option>'}${(referenceData()?.categories || []).map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}`;
 }
 function productOptions(selected = "") {
   return `<option value="">Select product</option>${(
@@ -176,18 +177,54 @@ function renderAuth() {
       <div class="auth-switch">${mode === "login" ? `<button data-auth="reset">Forgot password?</button><span>New here? <button data-auth="signup">Create an account</button></span>` : `<button data-auth="login">Back to sign in</button>${mode === "reset" ? '<button data-auth="reset-confirm">I have a code</button>' : ""}`}</div></div><div class="auth-panel-foot">Built for the people who keep things moving.</div></div></div>`;
 }
 
+function referenceData() {
+  return state.catalog || state.filters;
+}
+
 let catalogRequest;
+let filterRequest;
+let referenceVersion = 0;
+let catalogRequestVersion = -1;
+let filterRequestVersion = -1;
 function loadCatalog() {
   if (state.catalog) return Promise.resolve(state.catalog);
-  if (!catalogRequest) {
+  if (!catalogRequest || catalogRequestVersion !== referenceVersion) {
+    const version = referenceVersion;
+    catalogRequestVersion = version;
     catalogRequest = api("/bootstrap")
       .then((catalog) => {
-        state.catalog = catalog;
+        if (version === referenceVersion) {
+          state.catalog = catalog;
+          state.filters = catalog;
+        }
         return catalog;
       })
-      .finally(() => (catalogRequest = null));
+      .finally(() => {
+        if (catalogRequestVersion === version) catalogRequest = null;
+      });
   }
   return catalogRequest;
+}
+function loadFilters() {
+  if (referenceData()) return Promise.resolve(referenceData());
+  if (!filterRequest || filterRequestVersion !== referenceVersion) {
+    const version = referenceVersion;
+    filterRequestVersion = version;
+    filterRequest = api("/bootstrap?products=0")
+      .then((filters) => {
+        if (version === referenceVersion) state.filters = filters;
+        return filters;
+      })
+      .finally(() => {
+        if (filterRequestVersion === version) filterRequest = null;
+      });
+  }
+  return filterRequest;
+}
+function clearCatalog() {
+  referenceVersion++;
+  state.catalog = null;
+  state.filters = null;
 }
 
 function renderDashboard(data) {
@@ -240,22 +277,19 @@ function productRows(rows) {
 
 function renderStock(rows) {
   const content = `${pageHead("Stock overview", "See on-hand quantities at each location and reconcile physical counts.", `<a class="btn primary" href="#/new/adjustment">${icon("plus", 17)} Stock adjustment</a>`)}
-    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="stock-search" placeholder="Search name or SKU" aria-label="Search stock"></label><select id="stock-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="stock-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count">${rows.length} locations</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Warehouse</th><th>Location</th><th>Unit cost</th><th>On hand</th><th>Unit</th></tr></thead><tbody id="stock-rows">${stockRows(rows)}</tbody></table></div><p class="table-note">Stock totals change only when an operation is validated. Use an adjustment to record a physical count.</p>`;
+    <div class="toolbar"><label class="search-field">${icon("search", 18)}<input id="stock-search" placeholder="Search name or SKU" aria-label="Search stock"></label><select id="stock-warehouse" aria-label="Filter by warehouse">${warehouseOptions("", true)}</select><select id="stock-category" aria-label="Filter by category">${categoryOptions("", true)}</select><span class="toolbar-count" id="stock-count">Showing ${rows.length} locations</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Warehouse</th><th>Location</th><th>Unit cost</th><th>On hand</th><th>Unit</th></tr></thead><tbody id="stock-rows">${stockRows(rows)}</tbody></table></div><button class="btn secondary load-more" type="button" data-action="stock-more" ${rows.length < pageSize ? "hidden" : ""}>Load more stock</button><p class="table-note">Stock totals change only when an operation is validated. Use an adjustment to record a physical count.</p>`;
   shell(content, "/stock", "Stock overview");
 }
 function stockRows(rows) {
-  const categories = new Map(
-    state.catalog.products.map((product) => [product.id, product.category_id]),
-  );
   return rows.length
     ? rows
         .map(
           (r) =>
-            `<tr data-search="${escapeHtml((r.product + " " + r.sku).toLowerCase())}" data-warehouse="${r.warehouse_id}" data-category="${r.category || ""}" data-category-id="${categories.get(r.product_id) || ""}"><td><strong>${escapeHtml(r.product)}</strong></td><td class="code">${escapeHtml(r.sku)}</td><td>${escapeHtml(r.warehouse)}</td><td>${escapeHtml(r.location)}</td><td>${formatQuantity(r.unit_cost)}</td><td><strong>${formatQuantity(r.quantity)}</strong></td><td>${escapeHtml(r.uom)}</td></tr>`,
+            `<tr><td><strong>${escapeHtml(r.product)}</strong></td><td class="code">${escapeHtml(r.sku)}</td><td>${escapeHtml(r.warehouse)}</td><td>${escapeHtml(r.location)}</td><td>${formatQuantity(r.unit_cost)}</td><td><strong>${formatQuantity(r.quantity)}</strong></td><td>${escapeHtml(r.uom)}</td></tr>`,
         )
         .join("")
-    : `<tr><td colspan="7">${empty("No stock locations yet", "Create a warehouse and add products to see stock by location.", '<a class="btn secondary" href="#/warehouses">Set up warehouse</a>')}</td></tr>`;
+    : `<tr><td colspan="7">${empty("No recorded stock yet", "Opening stock and validated receipts will appear here.", '<a class="btn secondary" href="#/products">View products</a>')}</td></tr>`;
 }
 
 function operationTitle(kind) {
@@ -398,9 +432,10 @@ function historyRow(m) {
 }
 
 function renderWarehouses() {
-  const list = state.catalog.warehouses;
+  const data = referenceData();
+  const list = data.warehouses;
   const locationsByWarehouse = new Map();
-  for (const location of state.catalog.locations) {
+  for (const location of data.locations) {
     if (!locationsByWarehouse.has(location.warehouse_id))
       locationsByWarehouse.set(location.warehouse_id, []);
     locationsByWarehouse.get(location.warehouse_id).push(location);
@@ -440,6 +475,7 @@ async function render() {
   const route = location.hash.slice(1) || "/dashboard";
   const id = ++state.renderId;
   clearTimeout(changed.timer);
+  stockFilterController?.abort();
   operationFilterController?.abort();
   historyFilterController?.abort();
   const current = () => id === state.renderId;
@@ -455,7 +491,7 @@ async function render() {
       return;
     }
     if (route === "/stock") {
-      const [rows] = await Promise.all([api("/stock"), loadCatalog()]);
+      const [rows] = await Promise.all([api("/stock"), loadFilters()]);
       if (current()) renderStock(rows);
       return;
     }
@@ -465,7 +501,7 @@ async function render() {
       return;
     }
     if (route === "/warehouses") {
-      await loadCatalog();
+      await loadFilters();
       if (current()) renderWarehouses();
       return;
     }
@@ -480,7 +516,7 @@ async function render() {
       const kind = parts[1];
       const [rows] = await Promise.all([
         api("/operations" + queryString({ type: kind === "all" ? "" : kind })),
-        loadCatalog(),
+        loadFilters(),
       ]);
       if (current()) renderOperations(kind, rows);
       return;
@@ -547,7 +583,7 @@ function simpleModal(kind, warehouseId = null) {
       "location-form",
     );
   if (kind === "edit-warehouse") {
-    const w = state.catalog.warehouses.find(
+    const w = referenceData().warehouses.find(
       (item) => item.id === Number(warehouseId),
     );
     return openModal(
@@ -557,7 +593,7 @@ function simpleModal(kind, warehouseId = null) {
     );
   }
   if (kind === "edit-location") {
-    const l = state.catalog.locations.find(
+    const l = referenceData().locations.find(
       (item) => item.id === Number(warehouseId),
     );
     return openModal(
@@ -617,7 +653,7 @@ async function submitForm(event) {
       }
       state.user = result.user;
       state.csrf = result.csrf;
-      state.catalog = null;
+      clearCatalog();
       if (location.hash === "#/dashboard") await render();
       else location.hash = "/dashboard";
       return;
@@ -659,7 +695,7 @@ async function submitForm(event) {
         method: id ? "PUT" : "POST",
         body: JSON.stringify(values),
       });
-      state.catalog = null;
+      clearCatalog();
       showNotice(id ? "Operation updated" : "Draft saved");
       location.hash = "/operation/" + (id || result.id);
       return;
@@ -672,7 +708,7 @@ async function submitForm(event) {
       showNotice("Profile updated");
     }
     document.querySelector("#dialog")?.close();
-    if (formId !== "profile-form") state.catalog = null;
+    if (formId !== "profile-form") clearCatalog();
     await render();
   } catch (error) {
     showNotice(error.message, true);
@@ -716,6 +752,27 @@ async function clickAction(event) {
     return;
   }
   if (action === "print") return window.print();
+  if (action === "stock-more") {
+    target.disabled = true;
+    try {
+      const count = document.querySelectorAll("#stock-rows tr").length;
+      const query = stockQuery(count);
+      const rows = await api("/stock" + query);
+      if (!target.isConnected || query !== stockQuery(count)) return;
+      if (rows.length)
+        document
+          .querySelector("#stock-rows")
+          .insertAdjacentHTML("beforeend", stockRows(rows));
+      document.querySelector("#stock-count").textContent =
+        `Showing ${count + rows.length} locations`;
+      target.hidden = rows.length < pageSize;
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      target.disabled = false;
+    }
+    return;
+  }
   if (action === "operations-more") {
     target.disabled = true;
     try {
@@ -762,7 +819,7 @@ async function clickAction(event) {
       await api("/logout", { method: "POST", body: "{}" });
       state.user = null;
       state.csrf = "";
-      state.catalog = null;
+      clearCatalog();
       renderAuth();
       return;
     }
@@ -786,7 +843,7 @@ async function clickAction(event) {
       const id = action.split(":")[1];
       await api(`/operations/${id}/validate`, { method: "POST", body: "{}" });
       showNotice("Stock updated and movement logged");
-      state.catalog = null;
+      clearCatalog();
       return await render();
     }
   } catch (error) {
@@ -811,6 +868,37 @@ function filterRows(inputId, rowId, fields) {
     );
     row.hidden = !(matchingText && matchingFields);
   }
+}
+
+function stockQuery(offset) {
+  return queryString({
+    search: document.querySelector("#stock-search")?.value,
+    warehouse_id: document.querySelector("#stock-warehouse")?.value,
+    category_id: document.querySelector("#stock-category")?.value,
+    offset,
+  });
+}
+let stockFilterController;
+async function filterStock() {
+  stockFilterController?.abort();
+  const controller = new AbortController();
+  stockFilterController = controller;
+  let rows;
+  try {
+    rows = await api("/stock" + stockQuery(0), {
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    throw error;
+  }
+  if (controller.signal.aborted) return;
+  const tbody = document.querySelector("#stock-rows");
+  if (tbody) tbody.innerHTML = stockRows(rows);
+  const count = document.querySelector("#stock-count");
+  if (count) count.textContent = `Showing ${rows.length} locations`;
+  const more = document.querySelector('[data-action="stock-more"]');
+  if (more) more.hidden = rows.length < pageSize;
 }
 
 function operationQuery(offset) {
@@ -886,21 +974,18 @@ function changed(event) {
       filterRows("product-search", "product-rows", [
         ["product-category", "category"],
       ]);
-    if (event.target.id.startsWith("stock-"))
-      filterRows("stock-search", "stock-rows", [
-        ["stock-warehouse", "warehouse"],
-        ["stock-category", "categoryId"],
-      ]);
     if (
+      event.target.id.startsWith("stock-") ||
       event.target.id.startsWith("operation-") ||
       event.target.id.startsWith("history-")
     ) {
       clearTimeout(changed.timer);
-      const isOperation = event.target.id.startsWith("operation-");
-      changed.timer = setTimeout(() => {
-        const task = isOperation
+      const task = event.target.id.startsWith("stock-")
+        ? filterStock
+        : event.target.id.startsWith("operation-")
           ? filterOperations
           : filterHistory;
+      changed.timer = setTimeout(() => {
         task().catch((error) => showNotice(error.message, true));
       }, event.type === "input" ? 180 : 0);
     }

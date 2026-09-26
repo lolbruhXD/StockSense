@@ -359,7 +359,11 @@ class Handler(BaseHTTPRequestHandler):
                         dict(r)
                         for r in db.execute("SELECT * FROM categories ORDER BY name")
                     ],
-                    "products": inventory.list_products(db),
+                    "products": (
+                        inventory.list_products(db)
+                        if self.param(query, "products") != "0"
+                        else []
+                    ),
                 }
             )
         if path == "/api/dashboard" and method == "GET":
@@ -408,6 +412,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.param(query, "search"),
                     self.param(query, "warehouse_id"),
                     self.param(query, "category_id"),
+                    min(max(int(self.param(query, "limit") or 100), 1), 200),
+                    max(int(self.param(query, "offset") or 0), 0),
                 )
             )
         if path == "/api/operations" and method == "GET":

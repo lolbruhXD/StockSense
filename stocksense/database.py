@@ -97,7 +97,11 @@ CREATE TABLE IF NOT EXISTS movements (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_operations_type_status ON operations(type, status);
+CREATE INDEX IF NOT EXISTS idx_operations_pending_type ON operations(type)
+    WHERE status NOT IN ('done','canceled');
 CREATE INDEX IF NOT EXISTS idx_movements_product_date ON movements(product_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_levels_location ON stock_levels(location_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 """
 
 
@@ -108,13 +112,13 @@ def connect(path=None):
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("PRAGMA busy_timeout = 10000")
-    db.execute("PRAGMA journal_mode = WAL")
     return db
 
 
 def initialize(path=None):
     db = connect(path)
     try:
+        db.execute("PRAGMA journal_mode = WAL")
         db.executescript(SCHEMA)
     finally:
         db.close()
